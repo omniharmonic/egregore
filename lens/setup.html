@@ -197,6 +197,21 @@
   </section>
 
   <section class="panel" style="flex-basis: 100%;">
+    <h2>look</h2>
+    <p class="hint">
+      The preamble every prompt is built on. Changing it changes the next clip
+      — no restart. Pick a register to start from, then edit freely.
+    </p>
+    <div class="row" id="registers"></div>
+    <textarea id="grammar" rows="7" spellcheck="false"></textarea>
+    <div class="row" style="margin-top:10px">
+      <button type="button" id="grammarSave">apply to the next clip</button>
+      <span class="flash" id="grammarFlash">applied</span>
+      <span class="bad" id="grammarErr"></span>
+    </div>
+  </section>
+
+  <section class="panel" style="flex-basis: 100%;">
     <h2>monitor</h2>
     <p class="hint" id="monHint">&nbsp;</p>
     <div id="monitor"></div>
@@ -313,6 +328,9 @@
     keysHint: $('keysHint'), zones: $('zones'), meter: $('meter'),
     nodes: $('nodes'), nodesHint: $('nodesHint'),
     monitor: $('monitor'), monHint: $('monHint'),
+    grammar: $('grammar'), grammarSave: $('grammarSave'),
+    grammarFlash: $('grammarFlash'), grammarErr: $('grammarErr'),
+    registers: $('registers'),
     audioHint: $('audioHint')
   };
 
@@ -400,6 +418,7 @@
       el.party.textContent = name || 'egregore';
       renderSecrets(); renderSettings(); renderModels(); renderPrices();
       renderZones(); renderAudio(); renderNodes(); renderMonitor();
+      loadGrammar();
     }).catch(function (err) {
       if (err && err.locked) { el.join.hidden = false; el.joinPass.focus(); return; }
       el.link.textContent = 'no route to host';
@@ -713,6 +732,81 @@
   }
 
   setInterval(renderMonitor, 3000);
+
+  // ---- the look ----------------------------------------------------------
+  //
+  // Starting points, not laws. "Abstract" is what every shipped preset uses,
+  // but it is a choice, and the register someone wants is usually one edit
+  // away from one of these rather than from a blank box.
+
+  var REGISTERS = {
+    abstract:
+      'Abstract, symbolic, non-representational. Deep saturated color,\n' +
+      'organic forms dissolving into geometric ones. Movement slow and\n' +
+      'liquid, never cutting, never frantic. Suggest meaning without\n' +
+      'depicting it: no readable text, no recognizable faces, no literal\n' +
+      'objects from the described themes.',
+    'semi-real':
+      'Semi-representational. Real materials and real light, but never a\n' +
+      'literal scene: surfaces, weather, water, smoke and glass photographed\n' +
+      'close enough that the subject dissolves into texture. Shallow depth of\n' +
+      'field, natural light, slow drifting camera. No readable text, no\n' +
+      'recognizable faces, no identifiable places.',
+    cinematic:
+      'Cinematic and atmospheric. Volumetric light through haze, deep\n' +
+      'shadow, anamorphic flare, film grain. Slow dolly and rack focus.\n' +
+      'Suggest a place without showing one: no readable text, no recognizable\n' +
+      'faces, nothing identifiable.',
+    liquid:
+      'Liquid and refractive. Ink in water, oil on glass, caustics and\n' +
+      'dispersion. Colour separating as it moves. Everything continuous and\n' +
+      'unhurried, nothing cutting. No readable text, no recognizable faces,\n' +
+      'no literal objects.'
+  };
+
+  function renderRegisters() {
+    el.registers.textContent = '';
+    var label = document.createElement('span');
+    label.className = 'key'; label.textContent = 'start from';
+    el.registers.appendChild(label);
+    Object.keys(REGISTERS).forEach(function (name) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.textContent = name;
+      b.addEventListener('click', function () {
+        el.grammar.value = REGISTERS[name];
+        el.grammar.focus();
+      });
+      el.registers.appendChild(b);
+    });
+  }
+
+  function loadGrammar() {
+    var live = dig(state.settings.overrides, 'aesthetic.grammar');
+    if (live === undefined) live = dig(state.settings.effective, 'aesthetic.grammar');
+    if (typeof live === 'string' && el.grammar.value.trim() === '') {
+      el.grammar.value = live;
+    }
+  }
+
+  el.grammarSave.addEventListener('click', function () {
+    el.grammarErr.textContent = '';
+    var text = el.grammar.value.trim();
+    if (!text) { el.grammarErr.textContent = 'the look cannot be empty'; return; }
+    fetch('/api/settings', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ aesthetic: { grammar: text } })
+    }).then(function (r) {
+      return r.json().then(function (b) { return { ok: r.ok, body: b }; });
+    }).then(function (res) {
+      if (!res.ok) { el.grammarErr.textContent = String(res.body.detail || 'rejected'); return; }
+      state.settings.overrides = res.body.overrides;
+      el.grammarFlash.classList.add('on');
+      setTimeout(function () { el.grammarFlash.classList.remove('on'); }, 1200);
+    });
+  });
+
+  renderRegisters();
 
   // ---- zones ------------------------------------------------------------
 

@@ -218,6 +218,10 @@ class LiveSettings:
     clip_duration_s: int
     resolution: str
     drift: float
+    #: The prompt preamble every generation is built on — the single
+    #: strongest lever over how a party looks, and therefore the one most
+    #: worth being able to change without restarting it.
+    grammar: str = ""
     cadence_floor_s: float | None = None
     #: Longest the loop may go without a new clip while the pool is still
     #: thin. Filling is not a steady drip: the free renderer exists to get a
@@ -234,6 +238,7 @@ class LiveSettings:
             clip_duration_s=cfg.generation.clip_duration_s,
             resolution=cfg.generation.resolution,
             drift=cfg.aesthetic.drift,
+            grammar=cfg.aesthetic.grammar,
         )
 
     def apply(self, overrides: dict) -> list[str]:
@@ -252,6 +257,9 @@ class LiveSettings:
             self.resolution = str(gen["resolution"])
             changed.append("generation.resolution")
         aes = overrides.get("aesthetic") or {}
+        if "grammar" in aes:
+            self.grammar = str(aes["grammar"])
+            changed.append("aesthetic.grammar")
         if "drift" in aes:
             self.drift = float(aes["drift"])
             changed.append("aesthetic.drift")
@@ -481,7 +489,7 @@ class ZonePipeline:
                 if borrowed is not None:
                     prompt = synthesize_prompt(
                         borrowed,
-                        cfg.aesthetic.grammar,
+                        self.live.grammar,
                         self.loom.continuity_context(),
                         self.live.drift,
                         self.mood.state(),
@@ -501,7 +509,7 @@ class ZonePipeline:
                     continue
                 result = await self.weaver.weave(
                     window,
-                    grammar=cfg.aesthetic.grammar,
+                    grammar=self.live.grammar,
                     drift=self.live.drift,
                     mood=self.mood.state(),
                     continuity=self.loom.continuity_context(),

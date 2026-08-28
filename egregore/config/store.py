@@ -43,6 +43,7 @@ LIVE_KEYS: frozenset[str] = frozenset({
     "generation.resolution",
     "continuity.default_mode",
     "aesthetic.drift",
+    "aesthetic.grammar",
     "cadence_floor_s",
 })
 
