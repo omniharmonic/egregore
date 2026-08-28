@@ -108,6 +108,9 @@ class ConductorState:
         #: The config the party is actually running, as plain JSON, so the
         #: settings page can show effective values next to the overrides.
         self.effective_config: dict | None = None
+        #: Bumped whenever a zone's client config changes, so a screen
+        #: can tell a genuine change from a reconnect.
+        self._config_revision: dict[str, int] = {}
 
         self._manifests: dict[str, Manifest] = {}
         self._latest_frame: dict[str, FeatureFrame] = {}
@@ -152,6 +155,35 @@ class ConductorState:
         message = {"type": "manifest", "revision": revision}
         for queue in self._manifest_subs.get(zone, ()):
             _drop_oldest_put(queue, message)
+
+    # -- live zone configuration ------------------------------------------
+
+    def set_zone_config(self, zone: str, patch: dict) -> dict:
+        """Merge ``patch`` into a zone's client config and tell its screens.
+
+        Screens read ``/api/config`` once at boot, so a change made while a
+        party is running would otherwise not reach them until someone
+        reloaded every display in the room. The notice rides the manifest
+        socket the screens already hold open, and carries a revision so a
+        client can ignore one it has already applied.
+
+        Raises ``KeyError`` for an unknown zone.
+        """
+        if zone not in self.zone_config:
+            raise KeyError(zone)
+        self.zone_config[zone].update(patch)
+        self._config_revision[zone] = self._config_revision.get(zone, 0) + 1
+        message = {"type": "config", "revision": self._config_revision[zone]}
+        for queue in self._manifest_subs.get(zone, ()):
+            _drop_oldest_put(queue, message)
+        logger.info(
+            "conductor[%s]: zone config updated (%s), revision=%d",
+            zone, ", ".join(sorted(patch)), self._config_revision[zone],
+        )
+        return self.get_config(zone) or {}
+
+    def config_revision(self, zone: str) -> int:
+        return self._config_revision.get(zone, 0)
 
     # -- feature bus ------------------------------------------------------
 
@@ -210,7 +242,12 @@ class ConductorState:
             "screen": screen,
             "lens_stack": screen_cfg.get("lens_stack", zone_cfg.get("lens_stack", [])),
             "loop_phase_offset": screen_cfg.get("loop_phase_offset", 0.0),
-            "audio_source": screen_cfg.get("audio_source", "zone"),
+            # Screen overrides zone, zone overrides the default — the same
+            # precedence lens_stack uses. Reading this from the screen alone
+            # made a zone-level audio_source silently inert.
+            "audio_source": screen_cfg.get(
+                "audio_source", zone_cfg.get("audio_source", "zone")
+            ),
             "crossfade_s": crossfade_s,
         }
 

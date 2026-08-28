@@ -53,6 +53,51 @@ _CLIP_CACHE_CONTROL = "public, max-age=31536000, immutable"
 _WS_UNAUTHORIZED = 4401
 
 
+#: Lenses the client will accept, mirroring KNOWN_LENSES in lens/lens.js. The
+#: settings page reads this rather than carrying its own copy.
+KNOWN_LENSES = (
+    "feedback", "kaleidoscope", "flow", "chroma", "bloom", "liquid",
+    "glitch", "pixelsort", "crt", "corrupt",
+)
+
+_LOOPBACK = ("127.0.0.1", "::1", "localhost")
+
+
+def _is_local(request: Request) -> bool:
+    """True when the request came from the machine running the party."""
+    return bool(request.client) and request.client.host in _LOOPBACK
+
+
+def _audio_devices() -> dict:
+    """Input devices, or an explanation of why we cannot list them.
+
+    ``sounddevice`` is an optional extra, so a core install answers this
+    honestly instead of 500ing at a UI that only wants to draw a dropdown.
+    """
+    try:
+        import sounddevice as sd  # type: ignore[import-not-found]
+    except Exception as exc:
+        return {
+            "available": False,
+            "reason": f"sounddevice not installed ({type(exc).__name__})",
+            "devices": [],
+        }
+    try:
+        devices = [
+            {
+                "index": i,
+                "name": d["name"],
+                "channels": d["max_input_channels"],
+                "default_samplerate": int(d.get("default_samplerate") or 0),
+            }
+            for i, d in enumerate(sd.query_devices())
+            if d["max_input_channels"] > 0
+        ]
+    except Exception as exc:  # a broken audio stack must not take the page down
+        return {"available": False, "reason": str(exc)[:200], "devices": []}
+    return {"available": True, "reason": "", "devices": devices}
+
+
 class JoinRequest(BaseModel):
     password: str = ""
 
@@ -322,9 +367,103 @@ def create_app(
         return {"applied_live": live, "restart_required": restart, "overrides": merged}
 
     @app.get("/api/secrets", dependencies=[Depends(require_operator)])
-    async def get_secrets() -> dict[str, bool]:
+    async def get_secrets(request: Request) -> dict:
         # Booleans only. No branch of this handler can reach a value.
-        return await asyncio.to_thread(config_store.secrets_present)
+        present = await asyncio.to_thread(config_store.secrets_present)
+        return {
+            "present": present,
+            "names": list(config_store.SECRET_NAMES),
+            # The page uses this to decide whether to offer inputs at all,
+            # rather than offering them and failing the write.
+            "writable": _is_local(request),
+        }
+
+    @app.post("/api/secrets", dependencies=[Depends(require_operator)])
+    async def post_secret(request: Request, entry: dict) -> dict:
+        """Store one credential. Loopback only, and write-only.
+
+        Deliberately stricter than the other settings routes: those can be
+        reached with the party password from anywhere on the network, but a
+        credential should require physical access to the machine running the
+        party. There is no route that reads a value back out.
+        """
+        if not _is_local(request):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "keys can only be set from the machine running Egregore",
+            )
+        name = str(entry.get("name", ""))
+        value = str(entry.get("value", ""))
+        if not value.strip():
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "value is empty")
+        try:
+            await asyncio.to_thread(config_store.write_secret, name, value.strip())
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        present = await asyncio.to_thread(config_store.secrets_present)
+        # The response says only that it is now set — never what was stored.
+        return {"saved": name, "present": present, "restart_required": True}
+
+    @app.get("/api/audio-devices", dependencies=[Depends(require_operator)])
+    async def get_audio_devices() -> dict:
+        """Input devices this machine can hear, for the microphone picker."""
+        return await asyncio.to_thread(_audio_devices)
+
+    @app.get("/api/zones", dependencies=[Depends(require_operator)])
+    async def get_zones() -> dict:
+        effective = state.effective_config or {}
+        zones = {z.get("id"): z for z in (effective.get("zones") or []) if z.get("id")}
+        out = {}
+        for zone in state.zone_config:
+            client = state.get_config(zone) or {}
+            source = zones.get(zone, {})
+            out[zone] = {
+                "lens_stack": client.get("lens_stack", []),
+                "audio_source": client.get("audio_source", "zone"),
+                "crossfade_s": client.get("crossfade_s", 2.0),
+                "config_revision": state.config_revision(zone),
+                "screens": sorted(state.zone_config[zone].get("screens", {})),
+                "mic": source.get("mic", {}),
+                "screens_connected": state.screens_connected_for(zone),
+            }
+        return {"zones": out, "known_lenses": list(KNOWN_LENSES)}
+
+    @app.post("/api/zones/{zone}", dependencies=[Depends(require_operator)])
+    async def post_zone(zone: str, patch: dict) -> dict:
+        """Change a zone's look while the party runs.
+
+        ``lens_stack`` and ``audio_source`` reach the screens immediately.
+        Microphone changes are not accepted here — the audio source is opened
+        once at start-up, so pretending it can be swapped live would be a lie.
+        """
+        allowed = {}
+        if "lens_stack" in patch:
+            stack = [str(n) for n in (patch.get("lens_stack") or [])]
+            unknown = [n for n in stack if n not in KNOWN_LENSES]
+            if unknown:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"unknown lens {unknown!r}; known: {sorted(KNOWN_LENSES)}",
+                )
+            allowed["lens_stack"] = stack
+        if "audio_source" in patch:
+            source = str(patch["audio_source"])
+            if source not in ("zone", "local_mic"):
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "audio_source must be 'zone' or 'local_mic'",
+                )
+            allowed["audio_source"] = source
+        if not allowed:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "nothing changeable in that payload"
+            )
+        try:
+            return state.set_zone_config(zone, allowed)
+        except KeyError as exc:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, f"unknown zone {zone!r}"
+            ) from exc
 
     @app.get("/api/models", dependencies=[Depends(require_operator)])
     async def get_models() -> dict:

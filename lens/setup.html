@@ -116,6 +116,23 @@
   }
   #pending[hidden] { display: none; }
 
+  .bar { display: flex; align-items: center; gap: 8px; padding: 1px 0; }
+  .bar .name { color: var(--dim); min-width: 13ch; }
+  .bar .track { flex: 0 0 260px; max-width: 40vw; height: 9px;
+                border: 1px solid var(--dimmer); position: relative; }
+  .bar .fill { position: absolute; inset: 0 auto 0 0; width: 0;
+               background: var(--accent); transition: width .08s linear; }
+  .bar .num { color: var(--text); min-width: 5ch; text-align: right; }
+  @media (prefers-reduced-motion: reduce) { .bar .fill { transition: none; } }
+
+  .lens-pick { display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 4px 0 8px; }
+  .lens-pick label { color: var(--dim); display: inline-flex; align-items: center;
+                     gap: 4px; cursor: pointer; }
+  .lens-pick input { min-width: 0; accent-color: var(--accent); }
+  .lens-pick label.on { color: var(--accent); }
+  .zone-block { border-top: 1px solid var(--dimmer); padding: 12px 0; }
+  .zone-block:first-child { border-top: 0; }
+
   table { border-collapse: collapse; width: 100%; }
   th, td { text-align: left; padding: 3px 12px 3px 0; vertical-align: top; }
   th { color: var(--dim); font-weight: 400; border-bottom: 1px solid var(--dimmer); }
@@ -160,10 +177,7 @@
 
   <section class="panel">
     <h2>keys</h2>
-    <p class="hint">
-      Stored on the machine running Egregore, never sent to this page.<br>
-      To add or change one: <span class="t">egregore setup</span>
-    </p>
+    <p class="hint" id="keysHint">&nbsp;</p>
     <div id="secrets"></div>
   </section>
 
@@ -174,6 +188,22 @@
       <span class="tag restart">restart</span> applies on the next run
     </p>
     <div id="settings"></div>
+  </section>
+
+  <section class="panel" style="flex-basis: 100%;">
+    <h2>audio</h2>
+    <p class="hint" id="audioHint">&nbsp;</p>
+    <div id="meter"></div>
+  </section>
+
+  <section class="panel" style="flex-basis: 100%;">
+    <h2>zones and screens</h2>
+    <p class="hint">
+      Effects and audio routing reach the screens immediately — no reload, no
+      restart. The microphone is opened once at start-up, so changing it needs
+      a restart and is set in the preset.
+    </p>
+    <div id="zones"></div>
   </section>
 
   <section class="panel" style="flex-basis: 100%;">
@@ -256,7 +286,9 @@
     join: $('join'), joinForm: $('joinForm'), joinPass: $('joinPass'), joinErr: $('joinErr'),
     mKey: $('mKey'), mProvider: $('mProvider'), mId: $('mId'), mDurations: $('mDurations'),
     mPrices: $('mPrices'), mAddPrice: $('mAddPrice'), mExtra: $('mExtra'),
-    mSave: $('mSave'), mErr: $('mErr')
+    mSave: $('mSave'), mErr: $('mErr'),
+    keysHint: $('keysHint'), zones: $('zones'), meter: $('meter'),
+    audioHint: $('audioHint')
   };
 
   // Above this, a per-clip reservation is far likelier to be a typo than
@@ -264,7 +296,8 @@
   // (Veo 4k, 8s: $9.60) and well below a slipped decimal.
   var IMPLAUSIBLE_RESERVE = 50;
 
-  var state = { settings: null, secrets: null, models: null, pending: {} };
+  var state = { settings: null, secrets: null, models: null, zones: null,
+                devices: null, pending: {}, meterEls: {} };
 
   // Every control the page can offer. `path` is the dotted key the server
   // uses, so live/restart classification comes from the server rather than
@@ -326,15 +359,18 @@
 
   function loadAll() {
     return Promise.all([
-      getJSON('/api/settings'), getJSON('/api/secrets'), getJSON('/api/models')
+      getJSON('/api/settings'), getJSON('/api/secrets'), getJSON('/api/models'),
+      getJSON('/api/zones'), getJSON('/api/audio-devices')
     ]).then(function (all) {
       state.settings = all[0]; state.secrets = all[1]; state.models = all[2];
+      state.zones = all[3]; state.devices = all[4];
       el.join.hidden = true;
       el.link.textContent = 'linked';
       el.link.className = 't';
       var name = dig(state.settings.effective, 'party.name');
       el.party.textContent = name || 'egregore';
       renderSecrets(); renderSettings(); renderModels(); renderPrices();
+      renderZones(); renderAudio();
     }).catch(function (err) {
       if (err && err.locked) { el.join.hidden = false; el.joinPass.focus(); return; }
       el.link.textContent = 'no route to host';
@@ -345,17 +381,70 @@
   // ---- keys -------------------------------------------------------------
 
   function renderSecrets() {
+    var writable = !!state.secrets.writable;
+    el.keysHint.textContent = writable
+      ? 'Stored on this machine at ~/.egregore/env (mode 600). Saved keys are '
+        + 'never sent back to this page, and take effect on the next restart.'
+      : 'Keys can only be set from the machine running Egregore. Open this page '
+        + 'there, or run: egregore setup';
+    el.keysHint.className = writable ? 'hint' : 'hint warn';
+
     el.secrets.textContent = '';
-    Object.keys(state.secrets).forEach(function (name) {
-      var present = state.secrets[name];
+    state.secrets.names.forEach(function (name) {
+      var present = state.secrets.present[name];
       var row = document.createElement('div');
       row.className = 'row';
+
       var k = document.createElement('span');
       k.className = 'key'; k.style.minWidth = '24ch'; k.textContent = name;
-      var v = document.createElement('span');
-      v.className = present ? 't' : 'off';
-      v.textContent = present ? 'detected' : 'not set';
-      row.appendChild(k); row.appendChild(v);
+      row.appendChild(k);
+
+      var status = document.createElement('span');
+      status.className = present ? 't' : 'off';
+      status.textContent = present ? 'set' : 'not set';
+      status.style.minWidth = '8ch';
+      row.appendChild(status);
+
+      if (writable) {
+        var input = document.createElement('input');
+        input.type = 'password';
+        input.autocomplete = 'off';
+        input.placeholder = present ? 'replace…' : 'paste key…';
+        input.style.minWidth = '22ch';
+        input.setAttribute('aria-label', name);
+        var save = document.createElement('button');
+        save.type = 'button'; save.textContent = 'save';
+        var note = document.createElement('span');
+
+        function commit() {
+          if (!input.value.trim()) return;
+          save.disabled = true;
+          fetch('/api/secrets', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ name: name, value: input.value })
+          }).then(function (r) {
+            return r.json().then(function (b) { return { ok: r.ok, body: b }; });
+          }).then(function (res) {
+            save.disabled = false;
+            input.value = '';           // never keep the value in the DOM
+            if (!res.ok) {
+              note.className = 'bad';
+              note.textContent = String(res.body.detail || 'rejected');
+              return;
+            }
+            note.className = 'warn';
+            note.textContent = 'saved — restart to use it';
+            status.className = 't'; status.textContent = 'set';
+            state.pending['key:' + name] = true; renderPending();
+          });
+        }
+        save.addEventListener('click', commit);
+        input.addEventListener('keydown', function (ev) {
+          if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+        });
+        row.appendChild(input); row.appendChild(save); row.appendChild(note);
+      }
       el.secrets.appendChild(row);
     });
   }
@@ -454,6 +543,232 @@
     el.pending.textContent =
       keys.length + (keys.length === 1 ? ' change saved' : ' changes saved') +
       ' — restart egregore to apply: ' + keys.join(', ');
+  }
+
+  // ---- zones ------------------------------------------------------------
+
+  function renderZones() {
+    el.zones.textContent = '';
+    var known = state.zones.known_lenses;
+
+    Object.keys(state.zones.zones).sort().forEach(function (zone) {
+      var z = state.zones.zones[zone];
+      var box = document.createElement('div');
+      box.className = 'zone-block';
+
+      var head = document.createElement('div');
+      head.className = 'row';
+      var name = document.createElement('span');
+      name.className = 't'; name.style.minWidth = '15ch'; name.textContent = zone;
+      var meta = document.createElement('span');
+      meta.className = 'off';
+      meta.textContent = z.screens_connected + ' screen(s) connected · '
+        + (z.screens.length ? z.screens.join(', ') : 'no named screens');
+      head.appendChild(name); head.appendChild(meta);
+      box.appendChild(head);
+
+      // --- effects, applied live ---
+      var effLabel = document.createElement('div');
+      effLabel.className = 'row';
+      var el1 = document.createElement('span');
+      el1.className = 'key'; el1.textContent = 'effects';
+      var flash = document.createElement('span');
+      flash.className = 'flash'; flash.textContent = 'applied';
+      var order = document.createElement('span');
+      order.className = 'off';
+      effLabel.appendChild(el1); effLabel.appendChild(order); effLabel.appendChild(flash);
+      box.appendChild(effLabel);
+
+      var pick = document.createElement('div');
+      pick.className = 'lens-pick';
+
+      function currentStack() {
+        return Array.prototype.slice.call(pick.querySelectorAll('input:checked'))
+          .map(function (i) { return i.value; });
+      }
+      function showOrder() {
+        var cur = currentStack();
+        order.textContent = cur.length
+          ? cur.join(' > ') + '  (' + cur.length + ' passes)'
+          : 'none — video passes through untouched';
+      }
+
+      known.forEach(function (lens) {
+        var lab = document.createElement('label');
+        var cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.value = lens;
+        cb.checked = z.lens_stack.indexOf(lens) !== -1;
+        if (cb.checked) lab.className = 'on';
+        cb.addEventListener('change', function () {
+          lab.className = cb.checked ? 'on' : '';
+          showOrder();
+          fetch('/api/zones/' + encodeURIComponent(zone), {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ lens_stack: currentStack() })
+          }).then(function (r) {
+            if (!r.ok) return;
+            flash.classList.add('on');
+            setTimeout(function () { flash.classList.remove('on'); }, 900);
+          });
+        });
+        lab.appendChild(cb);
+        lab.appendChild(document.createTextNode(lens));
+        pick.appendChild(lab);
+      });
+      box.appendChild(pick);
+      showOrder();
+
+      // --- audio routing, applied live ---
+      var arow = document.createElement('div');
+      arow.className = 'row';
+      var alab = document.createElement('label');
+      alab.className = 'key'; alab.textContent = 'audio for effects';
+      var asel = document.createElement('select');
+      [['zone', 'the room mic (server feature bus)'],
+       ['local_mic', "this screen's own mic (in-browser)"]].forEach(function (o) {
+        var opt = document.createElement('option');
+        opt.value = o[0]; opt.textContent = o[1];
+        if (z.audio_source === o[0]) opt.selected = true;
+        asel.appendChild(opt);
+      });
+      var aflash = document.createElement('span');
+      aflash.className = 'flash'; aflash.textContent = 'applied';
+      asel.addEventListener('change', function () {
+        fetch('/api/zones/' + encodeURIComponent(zone), {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ audio_source: asel.value })
+        }).then(function (r) {
+          if (!r.ok) return;
+          aflash.classList.add('on');
+          setTimeout(function () { aflash.classList.remove('on'); }, 900);
+        });
+      });
+      arow.appendChild(alab); arow.appendChild(asel); arow.appendChild(aflash);
+      box.appendChild(arow);
+
+      // --- microphone, restart-only, stated plainly ---
+      var mrow = document.createElement('div');
+      mrow.className = 'row';
+      var mlab = document.createElement('span');
+      mlab.className = 'key'; mlab.textContent = 'microphone';
+      var mval = document.createElement('span');
+      var type = (z.mic && z.mic.type) || 'fixture';
+      if (type === 'fixture') {
+        mval.className = 'warn';
+        mval.textContent = 'fixture — a scripted conversation with synthetic audio, '
+          + 'not a real microphone';
+      } else if (type === 'usb') {
+        mval.className = 'val';
+        mval.textContent = 'usb — ' + ((z.mic && z.mic.device) || 'system default input');
+      } else {
+        mval.className = 'val';
+        mval.textContent = type + (z.mic && z.mic.host ? ' — ' + z.mic.host : '');
+      }
+      var mtag = document.createElement('span');
+      mtag.className = 'tag restart'; mtag.textContent = 'set in the preset';
+      mrow.appendChild(mlab); mrow.appendChild(mval); mrow.appendChild(mtag);
+      box.appendChild(mrow);
+
+      if (state.devices && state.devices.available && state.devices.devices.length) {
+        var drow = document.createElement('div');
+        drow.className = 'row';
+        var dlab = document.createElement('span');
+        dlab.className = 'key'; dlab.textContent = 'inputs seen';
+        var dval = document.createElement('span');
+        dval.className = 'off';
+        dval.textContent = state.devices.devices.map(function (d) {
+          return d.name;
+        }).join(' · ');
+        drow.appendChild(dlab); drow.appendChild(dval);
+        box.appendChild(drow);
+      } else if (state.devices && !state.devices.available) {
+        var nrow = document.createElement('div');
+        nrow.className = 'row';
+        var nlab = document.createElement('span');
+        nlab.className = 'key'; nlab.textContent = 'inputs seen';
+        var nval = document.createElement('span');
+        nval.className = 'off'; nval.textContent = state.devices.reason;
+        nrow.appendChild(nlab); nrow.appendChild(nval);
+        box.appendChild(nrow);
+      }
+
+      el.zones.appendChild(box);
+    });
+  }
+
+  // ---- live audio meter ---------------------------------------------------
+  //
+  // The effects are driven by these numbers and nothing else, so watching them
+  // move is the only honest way to answer "is this actually audio reactive?".
+
+  var METER_BARS = [
+    ['rms', 'level'], ['low', 'low'], ['mid', 'mid'], ['high', 'high'],
+    ['centroid', 'brightness'], ['onset', 'onset'], ['intensity', 'intensity'],
+    ['valence', 'valence']
+  ];
+
+  function renderAudio() {
+    var zone = Object.keys(state.zones.zones).sort()[0];
+    if (!zone) return;
+    var z = state.zones.zones[zone];
+    var synthetic = ((z.mic && z.mic.type) || 'fixture') === 'fixture';
+
+    el.audioHint.className = synthetic ? 'hint warn' : 'hint';
+    el.audioHint.textContent = synthetic
+      ? 'Source: fixture. These numbers are generated, not heard — a synthetic '
+        + 'music bed with bursts around the scripted speech. The effects really '
+        + 'do follow them; nothing is listening to your room. Run a preset with '
+        + 'mic.type: usb for real audio.'
+      : 'Source: live microphone. Every effect shader reads these values.';
+
+    if (el.meter.childNodes.length) return;   // bars already built
+    METER_BARS.forEach(function (b) {
+      var row = document.createElement('div');
+      row.className = 'bar';
+      var name = document.createElement('span');
+      name.className = 'name'; name.textContent = b[1];
+      var track = document.createElement('div');
+      track.className = 'track';
+      var fill = document.createElement('div');
+      fill.className = 'fill';
+      track.appendChild(fill);
+      var num = document.createElement('span');
+      num.className = 'num'; num.textContent = '0.00';
+      row.appendChild(name); row.appendChild(track); row.appendChild(num);
+      el.meter.appendChild(row);
+      state.meterEls[b[0]] = { fill: fill, num: num };
+    });
+    openFeatureBus(zone);
+  }
+
+  function openFeatureBus(zone) {
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var ws;
+    try {
+      ws = new WebSocket(proto + '//' + location.host +
+                         '/ws/features?zone=' + encodeURIComponent(zone));
+    } catch (e) { return; }
+    var pending = null;
+    ws.onmessage = function (ev) {
+      try { pending = JSON.parse(ev.data); } catch (e) { /* ignore */ }
+    };
+    ws.onclose = function () { setTimeout(function () { openFeatureBus(zone); }, 2000); };
+    // The bus runs at ~30 Hz; repaint on frames instead, so a background tab
+    // costs nothing and the meter never outruns the display.
+    (function paint() {
+      if (pending) {
+        Object.keys(state.meterEls).forEach(function (k) {
+          var v = Number(pending[k]);
+          if (isNaN(v)) return;
+          var pct = Math.max(0, Math.min(1, v)) * 100;
+          state.meterEls[k].fill.style.width = pct.toFixed(1) + '%';
+          state.meterEls[k].num.textContent = v.toFixed(2);
+        });
+      }
+      requestAnimationFrame(paint);
+    })();
   }
 
   // ---- models -----------------------------------------------------------

@@ -365,7 +365,7 @@ def test_secrets_endpoint_reports_presence_and_never_a_value(cfg_home, monkeypat
     with TestClient(app) as client:
         client.post("/api/join", json={"password": "pw"})
         body = client.get("/api/secrets").json()
-    assert body["FAL_KEY"] is True
+    assert body["present"]["FAL_KEY"] is True
     assert "leak-me-if-you-can" not in _json.dumps(body)
 
 
@@ -473,3 +473,104 @@ def test_builtin_model_cannot_be_deleted(cfg_home):
         r = client.delete("/api/models/minimax-h3-max")
         assert r.status_code == 400
         assert "minimax-h3-max" in client.get("/api/models").json()
+
+
+# ---------------------------------------------------------------------------
+# Zones, lenses, audio devices, and writing a key
+# ---------------------------------------------------------------------------
+
+
+def _zoned_state(**kw) -> ConductorState:
+    return ConductorState(
+        clip_resolver=lambda clip_id: None,
+        zone_config={
+            "main": {"lens_stack": ["flow", "feedback"], "screens": {"s1": {}}},
+        },
+        **kw,
+    )
+
+
+def test_zones_lists_the_live_look_and_the_lenses_on_offer(cfg_home):
+    app = create_app(_zoned_state(), lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        body = client.get("/api/zones").json()
+    assert body["zones"]["main"]["lens_stack"] == ["flow", "feedback"]
+    assert body["zones"]["main"]["audio_source"] == "zone"
+    assert "kaleidoscope" in body["known_lenses"]
+
+
+def test_changing_a_lens_stack_takes_effect_and_notifies_screens(cfg_home):
+    state = _zoned_state()
+    queue = state.subscribe_manifest("main")   # stand in for a connected screen
+    app = create_app(state, lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        r = client.post("/api/zones/main", json={"lens_stack": ["glitch", "crt"]})
+        assert r.status_code == 200
+        assert r.json()["lens_stack"] == ["glitch", "crt"]
+        assert client.get("/api/config?zone=main").json()["lens_stack"] == ["glitch", "crt"]
+
+    # A screen holding the manifest socket learns without being reloaded.
+    assert queue.get_nowait() == {"type": "config", "revision": 1}
+
+
+def test_unknown_lens_is_refused_rather_than_silently_dropped(cfg_home):
+    app = create_app(_zoned_state(), lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        r = client.post("/api/zones/main", json={"lens_stack": ["flow", "not-a-lens"]})
+        assert r.status_code == 400
+        assert "not-a-lens" in r.json()["detail"]
+        # and the zone is untouched
+        assert client.get("/api/config?zone=main").json()["lens_stack"] == ["flow", "feedback"]
+
+
+def test_audio_source_switches_between_the_zone_bus_and_a_local_mic(cfg_home):
+    app = create_app(_zoned_state(), lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        assert client.post(
+            "/api/zones/main", json={"audio_source": "local_mic"}
+        ).json()["audio_source"] == "local_mic"
+        assert client.post(
+            "/api/zones/main", json={"audio_source": "nonsense"}
+        ).status_code == 400
+
+
+def test_zone_patch_refuses_a_microphone_change(cfg_home):
+    # The audio device is opened once at start-up, so accepting this here
+    # would report success for something that did not happen.
+    app = create_app(_zoned_state(), lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        assert client.post("/api/zones/main", json={"mic": {"type": "usb"}}).status_code == 400
+
+
+def test_unknown_zone_404s(cfg_home):
+    app = create_app(_zoned_state(), lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        assert client.post("/api/zones/nope", json={"lens_stack": ["flow"]}).status_code == 404
+
+
+def test_audio_devices_answers_even_without_sounddevice(cfg_home):
+    app = create_app(_zoned_state(), lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        body = client.get("/api/audio-devices").json()
+    assert set(body) == {"available", "reason", "devices"}
+    assert isinstance(body["devices"], list)
+
+
+def test_writing_a_key_is_refused_from_off_the_machine(cfg_home):
+    # TestClient reports its host as "testclient", i.e. not loopback, which
+    # is exactly the case this rule exists for: the party password is enough
+    # to change a lens stack, and deliberately not enough to set a credential.
+    app = create_app(_cfg_state(), lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        r = client.post("/api/secrets", json={"name": "FAL_KEY", "value": "abc"})
+        assert r.status_code == 403
+        assert client.get("/api/secrets").json()["writable"] is False
+        assert client.get("/api/secrets").json()["present"]["FAL_KEY"] is False

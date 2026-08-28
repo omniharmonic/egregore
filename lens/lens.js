@@ -48,6 +48,7 @@ const state = {
   overBudgetSince: 0, underBudgetSince: 0,
   manifestWs: null, manifestRetry: 0, manifestState: 'init',
   authPending: false, started: false,
+  configRevision: 0, stackPinned: false,
 };
 
 const cache = new ClipCache(CACHE_BYTES);
@@ -209,7 +210,10 @@ async function loadConfig() {
   // ?stack=flow,bloom overrides everything — for tuning a screen on site
   // without touching the party config. `?stack=` (empty) means no lenses.
   const raw = q.get('stack');
-  if (raw !== null) stack = raw.split(',').map((n) => n.trim()).filter((n) => KNOWN_LENSES.includes(n));
+  if (raw !== null) {
+    stack = raw.split(',').map((n) => n.trim()).filter((n) => KNOWN_LENSES.includes(n));
+    state.stackPinned = true;   // this screen was tuned by hand; leave it alone
+  }
   if (c && typeof c.loop_phase_offset === 'number' && isFinite(c.loop_phase_offset)) {
     state.phase = ((c.loop_phase_offset % 1) + 1) % 1;
   }
@@ -224,8 +228,33 @@ async function loadConfig() {
     features = new Features({ zone: ZONE, local: true, phase: state.phase });
     features.start();
   }
-  state.stack = stack;
-  state.activePasses = stack.length;
+  if (!state.stackPinned || state.stack.length === 0) {
+    state.stack = stack;
+    state.activePasses = stack.length;
+  }
+}
+
+// Re-read /api/config and adopt any change to the stack, crossfade or audio
+// routing without a reload. Safe to call at any time: loadConfig() is
+// idempotent and loadShaders() skips shaders already compiled.
+async function applyConfig() {
+  const before = state.stack.join('>');
+  try {
+    await loadConfig();
+    if (state.glOk) await loadShaders(state.stack);
+  } catch (e) {
+    console.warn('[lens] config reload failed:', e && e.message);
+    return;
+  }
+  if (playlist) {
+    playlist.phase = state.phase;
+    playlist.crossfade = state.crossfade;
+    playlist.crossfadePinned = !!state.crossfadePinned;
+  }
+  if (features) features.phase = state.phase;
+  if (state.stack.join('>') !== before) {
+    console.info(`[lens] stack ${before || 'none'} -> ${state.stack.join('>') || 'none'}`);
+  }
 }
 
 async function loadShaders(names) {
@@ -285,6 +314,12 @@ function connectManifestWs() {
     let m; try { m = JSON.parse(ev.data); } catch { return; }
     if (m && m.type === 'manifest' && playlist && m.revision !== playlist.revision) {
       playlist.refresh();
+    }
+    // The operator changed this zone's look. Screens only read /api/config
+    // at boot, so without this the room would have to be reloaded by hand.
+    if (m && m.type === 'config' && m.revision !== state.configRevision) {
+      state.configRevision = m.revision;
+      applyConfig();
     }
   };
   ws.onerror = () => { /* close follows */ };
