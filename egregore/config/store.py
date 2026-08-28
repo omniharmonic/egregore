@@ -44,6 +44,7 @@ LIVE_KEYS: frozenset[str] = frozenset({
     "continuity.default_mode",
     "aesthetic.drift",
     "aesthetic.grammar",
+    "aesthetic.abstraction",
     "cadence_floor_s",
 })
 

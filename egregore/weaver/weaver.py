@@ -79,11 +79,12 @@ class Weaver:
         drift: float = 0.4,
         mood: MoodState | None = None,
         continuity: str | None = None,
+        abstraction: float = 1.0,
     ) -> WeaveResult:
         self.cycles += 1
 
         if self._is_effectively_empty(window_text):
-            return self._weave_fallback(grammar, drift, mood, continuity)
+            return self._weave_fallback(grammar, drift, mood, continuity, abstraction)
 
         last: ValidationResult | None = None
         for attempt in range(1, self.max_attempts + 1):
@@ -96,7 +97,10 @@ class Weaver:
                 continue
             last = validate_theme(theme, window_text)
             if last.ok:
-                prompt = synthesize_prompt(theme, grammar, continuity, drift, mood)
+                prompt = synthesize_prompt(
+                    theme, grammar, continuity, drift, mood,
+                    abstraction=abstraction,
+                )
                 self.prompts_synthesized += 1
                 self.last_theme = theme
                 log.info(
@@ -139,9 +143,12 @@ class Weaver:
         drift: float,
         mood: MoodState | None,
         continuity: str | None,
+        abstraction: float = 1.0,
     ) -> WeaveResult:
         theme = fallback_theme(mood, self.last_theme)
-        prompt = synthesize_prompt(theme, grammar, continuity, drift, mood)
+        prompt = synthesize_prompt(
+            theme, grammar, continuity, drift, mood, abstraction=abstraction
+        )
         self.fallbacks += 1
         self.prompts_synthesized += 1
         log.info("weaver cycle fell back to features", extra={"has_mood": mood is not None})

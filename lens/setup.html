@@ -203,6 +203,14 @@
       — no restart. Pick a register to start from, then edit freely.
     </p>
     <div class="row" id="registers"></div>
+    <div class="row">
+      <label for="f-aesthetic.abstraction" class="key">how abstract</label>
+      <input type="range" id="f-aesthetic.abstraction" min="0" max="1" step="0.05"
+             style="min-width:260px">
+      <span class="val" id="absVal" style="min-width:5ch">1.00</span>
+      <span class="tag live">live</span>
+      <span class="off" id="absNote"></span>
+    </div>
     <textarea id="grammar" rows="7" spellcheck="false"></textarea>
     <div class="row" style="margin-top:10px">
       <button type="button" id="grammarSave">apply to the next clip</button>
@@ -330,7 +338,8 @@
     monitor: $('monitor'), monHint: $('monHint'),
     grammar: $('grammar'), grammarSave: $('grammarSave'),
     grammarFlash: $('grammarFlash'), grammarErr: $('grammarErr'),
-    registers: $('registers'),
+    registers: $('registers'), abs: $('f-aesthetic.abstraction'),
+    absVal: $('absVal'), absNote: $('absNote'),
     audioHint: $('audioHint')
   };
 
@@ -418,7 +427,7 @@
       el.party.textContent = name || 'egregore';
       renderSecrets(); renderSettings(); renderModels(); renderPrices();
       renderZones(); renderAudio(); renderNodes(); renderMonitor();
-      loadGrammar();
+      loadGrammar(); loadAbstraction();
     }).catch(function (err) {
       if (err && err.locked) { el.join.hidden = false; el.joinPass.focus(); return; }
       el.link.textContent = 'no route to host';
@@ -804,6 +813,49 @@
       el.grammarFlash.classList.add('on');
       setTimeout(function () { el.grammarFlash.classList.remove('on'); }, 1200);
     });
+  });
+
+  // --- how abstract ------------------------------------------------------
+  //
+  // Only changes how the already-abstracted motifs are drawn. The motifs come
+  // from a closed lexicon and the validator still runs, so turning this down
+  // makes the picture more literal without making the prompt any closer to
+  // what anyone in the room actually said.
+
+  var ABS_NOTE = [
+    [0.25, 'depicted directly, real materials and light'],
+    [0.50, 'recognisable but oblique, framed close'],
+    [0.75, 'sensed through material and form, not named'],
+    [1.01, 'pure abstraction, never literal objects']
+  ];
+
+  function absNote(v) {
+    for (var i = 0; i < ABS_NOTE.length; i++) {
+      if (v < ABS_NOTE[i][0]) return ABS_NOTE[i][1];
+    }
+    return ABS_NOTE[ABS_NOTE.length - 1][1];
+  }
+
+  function loadAbstraction() {
+    var v = dig(state.settings.overrides, 'aesthetic.abstraction');
+    if (v === undefined) v = dig(state.settings.effective, 'aesthetic.abstraction');
+    if (typeof v !== 'number') v = 1.0;
+    el.abs.value = v;
+    el.absVal.textContent = v.toFixed(2);
+    el.absNote.textContent = absNote(v);
+  }
+
+  el.abs.addEventListener('input', function () {
+    el.absVal.textContent = (+el.abs.value).toFixed(2);
+    el.absNote.textContent = absNote(+el.abs.value);
+  });
+  el.abs.addEventListener('change', function () {
+    fetch('/api/settings', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ aesthetic: { abstraction: +el.abs.value } })
+    }).then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (b) { if (b) state.settings.overrides = b.overrides; });
   });
 
   renderRegisters();

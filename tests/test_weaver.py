@@ -370,11 +370,29 @@ def test_mood_bias_phrasing_present():
 
 
 def test_synthesis_signature_cannot_accept_raw_text():
-    """Stage 2 is structurally out of reach of the ring buffer."""
-    import inspect
+    """Stage 2 is structurally out of reach of the ring buffer.
 
-    params = set(inspect.signature(synthesize_prompt).parameters)
-    assert params == {"theme", "grammar", "continuity", "drift", "mood"}
+    The exact-set assertion is the point: adding a parameter here has to be
+    a deliberate act, because a new string channel into stage 2 is exactly
+    how transcript text would get into an outbound prompt. `abstraction` is
+    a float that only selects between fixed instruction strings, so it
+    cannot carry content — and the assertion below checks that rather than
+    taking it on trust.
+    """
+    import inspect
+    import typing
+
+    sig = inspect.signature(synthesize_prompt)
+    assert set(sig.parameters) == {
+        "theme", "grammar", "continuity", "drift", "mood", "abstraction",
+    }
+    # Only `grammar` and `continuity` are text, and both are operator-supplied
+    # rather than room-supplied. Nothing else may be a string. Resolved with
+    # get_type_hints because the module uses postponed annotations, so the
+    # raw signature reports these as the string "float".
+    hints = typing.get_type_hints(synthesize_prompt)
+    assert hints["abstraction"] is float
+    assert hints["drift"] is float
 
 
 # ---------------------------------------------------------------------------
@@ -685,3 +703,61 @@ def test_contentless_chatter_still_falls_back():
 
     theme = HeuristicAbstractor().abstract_sync("wait, is there any more of that")
     assert list(theme.motifs) == list(DEFAULT_MOTIFS[: len(theme.motifs)])
+
+
+# ---------------------------------------------------------------------------
+# The abstraction dial
+# ---------------------------------------------------------------------------
+
+
+def _theme():
+    from egregore.types import ThemeObject
+
+    return ThemeObject(
+        motifs=["vast blue depth", "slow tidal pull"],
+        elemental=["water", "deep blue"], register="ambient",
+        valence=0.5, intensity=0.4, movement="slow drift",
+    )
+
+
+def test_abstraction_changes_how_the_motifs_are_drawn():
+    from egregore.weaver.synthesis import synthesize_prompt
+
+    literal = synthesize_prompt(_theme(), "G.", abstraction=0.0)
+    pure = synthesize_prompt(_theme(), "G.", abstraction=1.0)
+    assert "Depict these subjects directly" in literal
+    assert "pure abstract imagery" in pure
+    assert literal != pure
+    # The motifs themselves are unchanged: only the instruction moves.
+    for prompt in (literal, pure):
+        assert "vast blue depth" in prompt and "slow tidal pull" in prompt
+
+
+def test_abstraction_is_clamped_not_trusted():
+    from egregore.weaver.synthesis import synthesize_prompt
+
+    assert "Depict these subjects directly" in synthesize_prompt(
+        _theme(), "G.", abstraction=-5.0)
+    assert "pure abstract imagery" in synthesize_prompt(
+        _theme(), "G.", abstraction=99.0)
+
+
+async def test_a_literal_setting_does_not_weaken_the_privacy_floor():
+    """Turning the dial down makes the *picture* more literal. It must not
+    make the prompt any closer to what was said: the motifs still come from
+    the closed lexicon and the validator still runs."""
+    from egregore.weaver.abstractor import HeuristicAbstractor
+    from egregore.weaver.validator import normalize_words, word_ngrams
+    from egregore.weaver.weaver import Weaver
+
+    said = ("we drove out to the coast last summer and the tide pools were "
+            "glowing green at night, my grandmother kept shells in a bowl")
+    w = Weaver(abstractor=HeuristicAbstractor())
+    for abstraction in (0.0, 0.5, 1.0):
+        result = await w.weave(said, grammar="G.", drift=0.4,
+                               abstraction=abstraction)
+        assert result.prompt is not None
+        shared = (word_ngrams(normalize_words(result.prompt), 3)
+                  & word_ngrams(normalize_words(said), 3))
+        assert not shared, f"leak at abstraction={abstraction}: {sorted(shared)[:2]}"
+        assert "grandmother" not in result.prompt.lower()

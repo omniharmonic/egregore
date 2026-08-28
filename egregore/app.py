@@ -226,6 +226,8 @@ class LiveSettings:
     #: strongest lever over how a party looks, and therefore the one most
     #: worth being able to change without restarting it.
     grammar: str = ""
+    #: 1 = pure abstraction, 0 = recognisable depiction.
+    abstraction: float = 1.0
     cadence_floor_s: float | None = None
     #: Longest the loop may go without a new clip while the pool is still
     #: thin. Filling is not a steady drip: the free renderer exists to get a
@@ -243,6 +245,7 @@ class LiveSettings:
             resolution=cfg.generation.resolution,
             drift=cfg.aesthetic.drift,
             grammar=cfg.aesthetic.grammar,
+            abstraction=cfg.aesthetic.abstraction,
         )
 
     def apply(self, overrides: dict) -> list[str]:
@@ -261,6 +264,9 @@ class LiveSettings:
             self.resolution = str(gen["resolution"])
             changed.append("generation.resolution")
         aes = overrides.get("aesthetic") or {}
+        if "abstraction" in aes:
+            self.abstraction = float(aes["abstraction"])
+            changed.append("aesthetic.abstraction")
         if "grammar" in aes:
             self.grammar = str(aes["grammar"])
             changed.append("aesthetic.grammar")
@@ -500,6 +506,7 @@ class ZonePipeline:
                         self.loom.continuity_context(),
                         self.live.drift,
                         self.mood.state(),
+                        abstraction=self.live.abstraction,
                     )
                     self.bleeds += 1
                     self.governor.record_generation(self.zone)
@@ -520,6 +527,7 @@ class ZonePipeline:
                     drift=self.live.drift,
                     mood=self.mood.state(),
                     continuity=self.loom.continuity_context(),
+                    abstraction=self.live.abstraction,
                 )
                 if result.purge_requested:
                     self.ring.zero()

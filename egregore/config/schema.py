@@ -24,6 +24,12 @@ class AestheticConfig(BaseModel):
     )
     drift: float = Field(0.4, ge=0.0, le=1.0)
     reference_images: list[str] = Field(default_factory=list)
+    # How far from depiction to push: 1 renders the themes as pure abstract
+    # imagery, 0 asks for them as recognisable subjects. Only affects how the
+    # already-abstracted motifs are drawn — the validator still runs, so a
+    # literal picture is not a literal prompt.
+    abstraction: float = Field(1.0, ge=0.0, le=1.0)
+
 
 
 class WeaverLLMConfig(BaseModel):

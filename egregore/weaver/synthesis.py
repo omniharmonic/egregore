@@ -97,12 +97,36 @@ def _drift_phrase(drift: float) -> str:
     )
 
 
+#: How to draw the motifs, from depiction to pure abstraction. The bands are
+#: coarse on purpose: a continuous knob that only ever changes one adjective
+#: reads as broken, while four clearly different instructions are four
+#: clearly different pictures.
+_RENDER_INSTRUCTIONS: tuple[tuple[float, str], ...] = (
+    (0.25, "Depict these subjects directly and recognisably, photographed "
+           "with real materials and real light: "),
+    (0.50, "Show these subjects recognisably but obliquely — real materials, "
+           "framed close and partial so the subject reads as texture: "),
+    (0.75, "Suggest these themes through material and form rather than "
+           "depicting them; a viewer should sense the subject, not name it: "),
+    (1.01, "Render these themes as pure abstract imagery, never as literal "
+           "objects: "),
+)
+
+
+def _render_instruction(abstraction: float) -> str:
+    for threshold, text in _RENDER_INSTRUCTIONS:
+        if abstraction < threshold:
+            return text
+    return _RENDER_INSTRUCTIONS[-1][1]
+
+
 def synthesize_prompt(
     theme: ThemeObject,
     grammar: str,
     continuity: str | None = None,
     drift: float = 0.4,
     mood: MoodState | None = None,
+    abstraction: float = 1.0,
 ) -> str:
     """Compose the outbound generation prompt.
 
@@ -113,11 +137,19 @@ def synthesize_prompt(
             supplied by the Loom when continuity mode is active (T-6).
         drift: 0 = track the themes tightly, 1 = wander associatively (T-7).
         mood: content-blind audio-derived mood bias.
+        abstraction: how far from depiction to push. 1 renders the themes as
+            pure abstract imagery; 0 asks for them as recognisable subjects,
+            photographed directly. This changes only how the *already
+            abstracted* motifs are drawn — the motifs themselves come from a
+            closed lexicon and the validator still runs, so turning this down
+            makes the picture more literal without making the prompt any
+            closer to what anyone said.
 
     Returns:
         A single prompt string ending with the non-overridable safety floor.
     """
     drift = max(0.0, min(1.0, float(drift)))
+    abstraction = max(0.0, min(1.0, float(abstraction)))
     parts: list[str] = []
 
     grammar = (grammar or "").strip()
@@ -125,11 +157,7 @@ def synthesize_prompt(
         parts.append(grammar)
 
     if theme.motifs:
-        parts.append(
-            "Render these themes as pure abstract imagery, never as literal objects: "
-            + "; ".join(theme.motifs)
-            + "."
-        )
+        parts.append(_render_instruction(abstraction) + "; ".join(theme.motifs) + ".")
     if theme.elemental:
         parts.append("Elemental palette and material: " + ", ".join(theme.elemental) + ".")
 
