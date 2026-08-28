@@ -318,6 +318,8 @@ class ZonePipeline:
         self.muted = False
         #: Set when this zone's audio comes from enrolled browsers.
         self.network_source = None
+        #: Set when this zone opens a local audio device.
+        self.mic_source = None
         #: The most recent validated prompt, and when it was made. Operator
         #: visibility only — never a transcript, only the abstraction of one.
         self.last_prompt: str | None = None
@@ -369,7 +371,8 @@ class ZonePipeline:
                 from egregore.listener import MicSource
 
                 self._transcriber = make_transcriber(cfg.asr.engine, cfg.asr.language)
-                return MicSource(events, device=mic.device)
+                self.mic_source = MicSource(events, device=mic.device)
+                return self.mic_source
             except (RuntimeError, TypeError, ImportError) as e:
                 log.warning(
                     "zone %s: mic unavailable (%s); running on thematic memory",
@@ -586,6 +589,7 @@ class ZonePipeline:
             "bleeds": self.bleeds,
             "throttled": self.throttled,
             "discarded_fragments": self.discarded_fragments,
+            "input_device": getattr(self.mic_source, "device_name", None),
             **self.loom.status(),
         }
 
@@ -779,6 +783,11 @@ async def run_party(cfg: EgregoreConfig, *, ignore_settings: bool = False) -> No
         except ValueError as exc:      # a malformed frame is one node's bug
             log.warning("zone %s: bad ingest frame from a node (%s)", zone, exc)
             return None
+
+    for _zone, _pipe in pipelines.items():
+        name = getattr(_pipe.mic_source, "device_name", None)
+        if name:
+            state.input_devices[_zone] = name
 
     state.ingest_handler = _ingest
     state.settings_handler = _apply_settings

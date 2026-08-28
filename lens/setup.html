@@ -923,28 +923,64 @@
         mval.textContent = 'fixture — a scripted conversation with synthetic audio, '
           + 'not a real microphone';
       } else if (type === 'usb') {
+        // "usb" is the config word for "a local audio device", not a claim
+        // about the bus. Say which device was actually opened.
         mval.className = 'val';
-        mval.textContent = 'usb — ' + ((z.mic && z.mic.device) || 'system default input');
+        mval.textContent = z.input_device
+          ? z.input_device
+          : ((z.mic && z.mic.device) || 'system default input');
+      } else if (type === 'network') {
+        mval.className = 'val';
+        mval.textContent = 'phones and laptops that joined this room';
       } else {
         mval.className = 'val';
         mval.textContent = type + (z.mic && z.mic.host ? ' — ' + z.mic.host : '');
       }
       var mtag = document.createElement('span');
-      mtag.className = 'tag restart'; mtag.textContent = 'set in the preset';
+      mtag.className = 'tag restart';
+      mtag.textContent = type === 'network' ? 'joined over the network' : 'restart to change';
       mrow.appendChild(mlab); mrow.appendChild(mval); mrow.appendChild(mtag);
       box.appendChild(mrow);
 
-      if (state.devices && state.devices.available && state.devices.devices.length) {
+      if (type === 'usb' && state.devices && state.devices.available
+          && state.devices.devices.length) {
         var drow = document.createElement('div');
         drow.className = 'row';
-        var dlab = document.createElement('span');
-        dlab.className = 'key'; dlab.textContent = 'inputs seen';
-        var dval = document.createElement('span');
-        dval.className = 'off';
-        dval.textContent = state.devices.devices.map(function (d) {
-          return d.name;
-        }).join(' · ');
-        drow.appendChild(dlab); drow.appendChild(dval);
+        var dlab = document.createElement('label');
+        dlab.className = 'key'; dlab.textContent = 'use input';
+        var dsel = document.createElement('select');
+        var dflash = document.createElement('span');
+        dflash.className = 'flash'; dflash.textContent = 'saved';
+
+        var auto = document.createElement('option');
+        auto.value = ''; auto.textContent = 'system default';
+        dsel.appendChild(auto);
+        state.devices.devices.forEach(function (d) {
+          var o = document.createElement('option');
+          o.value = d.name; o.textContent = d.name + '  (' + d.channels + 'ch)';
+          if (z.input_device === d.name) o.selected = true;
+          dsel.appendChild(o);
+        });
+        dsel.addEventListener('change', function () {
+          // The device is opened once at start-up, so this is saved for the
+          // next run rather than pretending to switch a live stream.
+          var patch = { zones: [{ id: zone, mic: { type: 'usb',
+                        device: dsel.value || null } }] };
+          fetch('/api/settings', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(patch)
+          }).then(function (r) {
+            if (!r.ok) return;
+            dflash.classList.add('on');
+            setTimeout(function () { dflash.classList.remove('on'); }, 1200);
+            state.pending['mic:' + zone] = true; renderPending();
+          });
+        });
+        drow.appendChild(dlab); drow.appendChild(dsel); drow.appendChild(dflash);
+        var dtag = document.createElement('span');
+        dtag.className = 'tag restart'; dtag.textContent = 'restart';
+        drow.appendChild(dtag);
         box.appendChild(drow);
       } else if (state.devices && !state.devices.available) {
         var nrow = document.createElement('div');

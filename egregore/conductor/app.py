@@ -529,6 +529,7 @@ def create_app(
                 "config_revision": state.config_revision(zone),
                 "screens": sorted(state.zone_config[zone].get("screens", {})),
                 "mic": source.get("mic", {}),
+                "input_device": (state.input_devices or {}).get(zone),
                 "screens_connected": state.screens_connected_for(zone),
             }
         return {"zones": out, "known_lenses": list(KNOWN_LENSES)}

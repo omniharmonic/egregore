@@ -123,6 +123,9 @@ class ConductorState:
         #: topology. Screens keep their own loop_phase_offset, so the walls
         #: stay in step without being identical.
         self.mirror_zone: str | None = None
+        #: zone -> the input device actually opened, by name. The config only
+        #: records what *kind* of source a zone uses.
+        self.input_devices: dict[str, str] = {}
         #: Bound by the integration layer ONLY when the operator asked for it.
         #: Returns the live transcript window and recent prompts, so a room
         #: can be watched while it is being listened to. Off by default: this

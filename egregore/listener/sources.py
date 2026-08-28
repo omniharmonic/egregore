@@ -319,6 +319,11 @@ class MicSource:
     ) -> None:
         self.events = events
         self.device = device
+        #: Name of the input actually opened, filled in once the stream is up.
+        #: "usb" is the config word for "a local audio device", not a claim
+        #: about the bus, and on a laptop it is the built-in microphone —
+        #: worth saying which, rather than repeating the config word back.
+        self.device_name: str | None = None
         self.sample_rate = sample_rate
         self.block_ms = block_ms
         self.gate = gate if gate is not None else make_gate()
@@ -332,6 +337,12 @@ class MicSource:
     async def run(self) -> None:
         try:
             import sounddevice as sd  # type: ignore[import-not-found]
+
+            try:
+                chosen = self.device if self.device is not None else sd.default.device[0]
+                self.device_name = str(sd.query_devices(chosen)["name"])
+            except Exception:       # naming is a nicety, never a reason to fail
+                self.device_name = None
         except ImportError as exc:
             raise RuntimeError(
                 "MicSource requires the sounddevice package, which is not installed. "

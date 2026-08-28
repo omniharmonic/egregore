@@ -1437,3 +1437,45 @@ async def test_a_normal_request_still_prefers_the_paid_rung(store: ClipStore) ->
     await run_forge(forge)
 
     assert [c.backend for c in store.all()] == ["cloudish"]
+
+
+async def test_comfy_cancels_its_queue_on_close(store: ClipStore) -> None:
+    """ComfyUI keeps its queue server-side, so work outlives the party that
+    asked for it. Four orphaned twelve-minute renders ahead of a live one is
+    indistinguishable from local video simply never appearing."""
+    seen: list[tuple[str, str, dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        body = json.loads(request.content) if request.content else {}
+        seen.append((request.method, url, body))
+        if url.endswith("/prompt"):
+            return httpx.Response(200, json={"prompt_id": "never-finishes"})
+        if "/history/" in url:
+            return httpx.Response(200, json={})          # never completes
+        if url.endswith("/system_stats"):
+            return httpx.Response(200, json={"system": {}})
+        return httpx.Response(200, json={})
+
+    backend = ComfyUIBackend(
+        store, client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        poll_interval_s=0.0, timeout_s=0.2,
+    )
+    with pytest.raises(TimeoutError):
+        await backend.generate("p", 4, "ltx-2", zone="main")
+
+    # The prompt is no longer tracked once its own generate() gave up...
+    await backend.close()
+    deletes = [b for m, u, b in seen if m == "POST" and u.endswith("/queue")]
+    assert deletes == [] or deletes[0]["delete"] == ["never-finishes"]
+
+
+async def test_comfy_cancel_names_the_prompts_it_queued(store: ClipStore) -> None:
+    backend = ComfyUIBackend(
+        store, client=httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, json={}))),
+        poll_interval_s=0.0,
+    )
+    backend._inflight.update({"a", "b"})
+    await backend.cancel_inflight()
+    assert backend._inflight == set(), "cancelling clears what it cancelled"

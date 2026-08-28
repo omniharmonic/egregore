@@ -134,6 +134,11 @@ class ComfyUIBackend:
 
         self._client = client
         self._owns_client = client is None
+        #: Prompt ids we have queued and not yet seen finish. ComfyUI's queue
+        #: lives in the server, so without this a restart leaves this party's
+        #: renders running — four orphaned twelve-minute jobs ahead of a live
+        #: one is indistinguishable from local video simply never appearing.
+        self._inflight: set[str] = set()
 
     # -- protocol ----------------------------------------------------------
 
@@ -203,7 +208,11 @@ class ComfyUIBackend:
         started = time.monotonic()
         workflow = self._patched_workflow(prompt, duration_s)
         prompt_id = await self._submit(workflow)
-        outputs = await self._poll(prompt_id)
+        self._inflight.add(prompt_id)
+        try:
+            outputs = await self._poll(prompt_id)
+        finally:
+            self._inflight.discard(prompt_id)
         descriptor = _first_output(outputs)
 
         tmp_path = self.store.temp_path()
@@ -234,9 +243,34 @@ class ComfyUIBackend:
         return ref
 
     async def close(self) -> None:
+        """Cancel anything still queued, then release the client.
+
+        ComfyUI keeps its queue server-side, so work outlives the party that
+        asked for it. Leaving it running means the next party waits behind
+        renders nobody is going to watch.
+        """
+        await self.cancel_inflight()
         if self._client is not None and self._owns_client:
             await self._client.aclose()
             self._client = None
+
+    async def cancel_inflight(self) -> None:
+        """Drop this backend's queued prompts and interrupt the running one."""
+        if not self._inflight:
+            return
+        pending = sorted(self._inflight)
+        self._inflight.clear()
+        try:
+            await self._http().post(
+                f"{self.base_url}/queue", json={"delete": pending}, timeout=5.0
+            )
+            await self._http().post(f"{self.base_url}/interrupt", timeout=5.0)
+        except httpx.HTTPError as exc:
+            # A ComfyUI that is already gone is the common case here, and it
+            # has taken the queue with it.
+            log.debug("could not cancel %d queued prompt(s): %s", len(pending), exc)
+        else:
+            log.info("cancelled %d queued ComfyUI prompt(s)", len(pending))
 
     # -- internals ---------------------------------------------------------
 
