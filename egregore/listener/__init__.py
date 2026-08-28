@@ -13,10 +13,13 @@ from __future__ import annotations
 
 from .features import BAND_HIGH, BAND_LOW, BAND_MID, compute_features
 from .mood import MoodIntegrator
+from .network import NetworkSource, merge_frames
 from .sources import FixtureSource, MicSource, ScriptLine, ZoneEvents, parse_script
 from .vad import EnergySpeechGate, SpeechGate, WebRtcSpeechGate, make_gate
 
 __all__ = [
+    "NetworkSource",
+    "merge_frames",
     "compute_features",
     "BAND_LOW",
     "BAND_MID",
