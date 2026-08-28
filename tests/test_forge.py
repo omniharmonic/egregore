@@ -33,7 +33,11 @@ from egregore.forge import (
     theme_digest,
     variant_for,
 )
-from egregore.forge.veo import COST_PER_SECOND, SAFETY_FACTOR
+from egregore.forge.veo import (
+    COST_PER_SECOND,
+    COST_PER_SECOND_BY_RESOLUTION,
+    SAFETY_FACTOR,
+)
 from egregore.types import BackendStatus, ClipRef, Reservation, ThemeObject
 
 HAS_FFMPEG = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
@@ -776,7 +780,10 @@ async def test_veo_never_asks_for_audio(store: ClipStore) -> None:
     await backend.generate("p", 4, "veo-3.1-quality", zone="main")
 
     params = recorder["payload"]["parameters"]
-    assert params["generateAudio"] is False  # PRD V-3
+    # Veo 3.x rejects `generateAudio` outright, so the request must not carry
+    # it at all. PRD V-3 is honoured at playback instead: the Lens plays every
+    # clip muted, so the room still only hears itself.
+    assert "generateAudio" not in params
     assert params["durationSeconds"] == 4
     assert params["aspectRatio"] == "16:9"
     assert recorder["payload"]["instances"][0]["prompt"] == "p"
@@ -799,9 +806,9 @@ async def test_veo_seed_image_is_base64_in_the_payload(store: ClipStore) -> None
 async def test_veo_extend_uses_the_provider_side_uri(store: ClipStore) -> None:
     recorder: dict = {}
     backend = veo_backend(store, veo_transport(recorder))
-    first = await backend.generate("p", 8, "veo-3.1-lite", zone="main")
+    first = await backend.generate("p", 8, "veo-3.1-fast", zone="main")
 
-    await backend.generate("p", 8, "veo-3.1-lite", extend_from=first, zone="main")
+    await backend.generate("p", 8, "veo-3.1-fast", extend_from=first, zone="main")
     assert recorder["payload"]["instances"][0]["video"] == {"uri": VIDEO_URI}
 
     # A clip this backend did not generate cannot be extended: extension only
@@ -811,7 +818,12 @@ async def test_veo_extend_uses_the_provider_side_uri(store: ClipStore) -> None:
         duration_s=8.0, zone="main", backend="local", tier="ltx-2",
     )
     with pytest.raises(RuntimeError, match="provider-side video reference"):
-        await backend.generate("p", 8, "veo-3.1-lite", extend_from=foreign, zone="main")
+        await backend.generate("p", 8, "veo-3.1-fast", extend_from=foreign, zone="main")
+
+    # Veo 3.1 Lite has no continuation mode at all, so asking it to extend is
+    # refused before any request is built.
+    with pytest.raises(RuntimeError, match="cannot extend video"):
+        await backend.generate("p", 8, "veo-3.1-lite", extend_from=first, zone="main")
     await backend.close()
 
 
@@ -819,17 +831,28 @@ async def test_veo_cost_table_math(store: ClipStore) -> None:
     backend = VeoBackend(store, api_key="k")
 
     assert SAFETY_FACTOR == Decimal("2")
-    assert backend.max_plausible_cost(8, "veo-3.1-lite") == Decimal("0.48")
-    assert backend.max_plausible_cost(8, "veo-3.1-fast") == Decimal("1.60")
-    assert backend.max_plausible_cost(8, "veo-3.1-quality") == Decimal("3.20")
-    assert backend.max_plausible_cost(4, "veo-3.1-lite") == Decimal("0.24")
+    # Priced off each tier's *most expensive* resolution (lite 1080p $0.08,
+    # fast 4k $0.30, quality 4k $0.60), then doubled.
+    assert backend.max_plausible_cost(8, "veo-3.1-lite") == Decimal("1.28")
+    assert backend.max_plausible_cost(8, "veo-3.1-fast") == Decimal("4.80")
+    assert backend.max_plausible_cost(8, "veo-3.1-quality") == Decimal("9.60")
+    assert backend.max_plausible_cost(4, "veo-3.1-lite") == Decimal("0.64")
 
     # Always at least twice the published rate — the ceiling must hold even
     # when the price table is wrong (Architecture §2.5).
     for tier, per_second in COST_PER_SECOND.items():
         assert backend.max_plausible_cost(8, tier) >= per_second * 8 * 2
+
+    # And at least twice the real published rate for *every* resolution that
+    # tier can be run at, not just the one currently configured. This is the
+    # assertion the old table failed: it reserved $0.48 for a lite 8s clip
+    # that bills at $0.64, so a party could have overrun its own ceiling.
+    for tier, by_res in COST_PER_SECOND_BY_RESOLUTION.items():
+        for price in by_res.values():
+            assert backend.max_plausible_cost(8, tier) >= price * 8 * 2
+
     # An unknown tier is charged as the most expensive one, never as free.
-    assert backend.max_plausible_cost(8, "veo-9-imaginary") == Decimal("3.20")
+    assert backend.max_plausible_cost(8, "veo-9-imaginary") == Decimal("9.60")
     assert isinstance(backend.max_plausible_cost(8, "veo-3.1-lite"), Decimal)
 
 
@@ -911,7 +934,7 @@ async def test_veo_in_a_ladder_above_the_mock(store: ClipStore) -> None:
     await forge.request(zone="main", prompt="p", duration_s=8, tier="veo-3.1-lite")
     await run_forge(forge)
 
-    assert ledger.authorized == [("veo", Decimal("0.48"))]
+    assert ledger.authorized == [("veo", Decimal("1.28"))]
     assert "requests" not in recorder, "refused rung must never hit the network"
     assert [c.backend for c in sink.clips] == ["mockish"]
     await cloud.close()
