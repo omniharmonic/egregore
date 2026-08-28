@@ -20,6 +20,7 @@ from egregore.conductor import ConductorState
 from egregore.config.schema import EgregoreConfig
 from egregore.forge import ClipStore, Forge, MockBackend
 from egregore.governor import Governor
+from egregore.scribe import RingBuffer
 
 CHATTER = """\
 00:01\tThe tide pools out past the point were glowing green last night.
@@ -89,11 +90,18 @@ class Party:
                            settle=settle, release=release, on_clip=on_clip)
         self.state = ConductorState(clip_resolver=self.store.path_for)
         self.live = LiveSettings.from_config(cfg)
+        self.shared_ring = (
+            RingBuffer.from_config("party", cfg.privacy)
+            if cfg.continuity.topology == "commons" else None
+        )
         for z in cfg.zones:
             self.pipelines[z.id] = ZonePipeline(
                 z, cfg, forge=self.forge, governor=self.governor,
                 state=self.state, bus=self.bus, live=self.live,
+                ring=self.shared_ring,
             )
+        if cfg.continuity.topology == "mirror" and cfg.zones:
+            self.state.mirror_zone = cfg.zones[0].id
         self.state.control_handler = make_control_handler(
             self.bus, self.pipelines, self.state
         )
@@ -102,6 +110,8 @@ class Party:
         }
 
     async def __aenter__(self):
+        if self.shared_ring is not None:
+            await self.shared_ring.start()
         self.governor.start()
         self.forge.start()
         for p in self.pipelines.values():
@@ -111,6 +121,8 @@ class Party:
     async def __aexit__(self, *exc):
         for p in self.pipelines.values():
             await p.close()
+        if self.shared_ring is not None:
+            await self.shared_ring.close()
         await self.forge.close()
 
     async def wait_clips(self, n: int, zone: str | None = None, timeout: float = 90.0):
@@ -336,3 +348,58 @@ async def test_a_network_zone_with_no_phones_yet_is_simply_quiet(tmp_path):
     async with Party(cfg) as party:
         assert party.pipelines["main"].network_source is not None
         assert party.state.latest_frame("main") is None
+
+
+# ---------------------------------------------------------------------------
+# Topologies — how zones relate to each other
+# ---------------------------------------------------------------------------
+
+
+def _two_zone_cfg(tmp_path, topology: str):
+    cfg = _cfg(tmp_path, zones=[
+        {"id": "kitchen", "mic": {"type": "fixture"}},
+        {"id": "garden", "mic": {"type": "fixture"}},
+    ])
+    cfg.continuity.topology = topology
+    return cfg
+
+
+async def test_independent_topology_keeps_pools_separate(tmp_path):
+    cfg = _two_zone_cfg(tmp_path, "independent")
+    async with Party(cfg) as party:
+        rings = {id(p.ring) for p in party.pipelines.values()}
+        assert len(rings) == 2, "each room hears only itself"
+
+
+async def test_commons_topology_shares_one_transcript_pool(tmp_path):
+    cfg = _two_zone_cfg(tmp_path, "commons")
+    async with Party(cfg) as party:
+        rings = {id(p.ring) for p in party.pipelines.values()}
+        assert len(rings) == 1, "commons means one pool for the whole party"
+        # Both zones still generate: commons shares the ears, not the eyes.
+        assert len(party.pipelines) == 2
+
+
+async def test_commons_pool_carries_what_either_room_said(tmp_path):
+    cfg = _two_zone_cfg(tmp_path, "commons")
+    async with Party(cfg) as party:
+        party.pipelines["kitchen"].ring.add("someone in the kitchen said this")
+        assert "kitchen" in party.pipelines["garden"].ring.snapshot()
+
+
+async def test_mirror_serves_one_zones_manifest_to_every_zone(tmp_path):
+    cfg = _two_zone_cfg(tmp_path, "mirror")
+    async with Party(cfg) as party:
+        assert party.state.mirror_zone == "kitchen"
+        await party.wait_clips(1)
+        kitchen = party.state.get_manifest("kitchen")
+        garden = party.state.get_manifest("garden")
+        assert kitchen is not None and garden is not None
+        assert [e.clip_id for e in kitchen.entries] == [e.clip_id for e in garden.entries]
+
+
+async def test_default_topology_is_independent(tmp_path):
+    cfg = _cfg(tmp_path, zones=[{"id": "main", "mic": {"type": "fixture"}}])
+    assert cfg.continuity.topology == "independent"
+    async with Party(cfg) as party:
+        assert party.state.mirror_zone is None

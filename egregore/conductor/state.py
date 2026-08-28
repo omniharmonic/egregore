@@ -119,6 +119,10 @@ class ConductorState:
         self.ingest_handler: (
             Callable[[str, str, bytes, int], Awaitable[None]] | None
         ) = None
+        #: When set, every zone is served this zone's manifest — the "mirror"
+        #: topology. Screens keep their own loop_phase_offset, so the walls
+        #: stay in step without being identical.
+        self.mirror_zone: str | None = None
 
         self._manifests: dict[str, Manifest] = {}
         self._latest_frame: dict[str, FeatureFrame] = {}
@@ -132,6 +136,14 @@ class ConductorState:
     # -- manifest bus ---------------------------------------------------
 
     def get_manifest(self, zone: str) -> Manifest | None:
+        """The manifest a screen in ``zone`` should play.
+
+        Under the "mirror" topology every zone resolves to one generating
+        zone, which is what makes a venue read as a single organism without a
+        second generation stream per room.
+        """
+        if self.mirror_zone is not None:
+            zone = self.mirror_zone
         return self._manifests.get(zone)
 
     def set_manifest(self, zone: str, manifest: Manifest) -> Manifest:

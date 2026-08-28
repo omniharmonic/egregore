@@ -102,6 +102,13 @@ class ContinuityConfig(BaseModel):
     loop_floor_weight: float = Field(0.15, ge=0, le=1)
     active_pool_max: int = Field(200, gt=0)
     max_chain_length: int = Field(20, ge=1)  # Phase 0-validated provider ceiling
+    # How zones relate to each other. "independent": each zone hears only its
+    # own room and renders its own loop. "commons": every microphone in the
+    # party feeds one transcript pool, but each zone still renders its own
+    # loop, so rooms look different while dreaming the same conversation.
+    # "mirror": one pool, one loop, every screen showing it at its own phase
+    # offset — one generation stream no matter how many zones exist.
+    topology: Literal["independent", "commons", "mirror"] = "independent"
 
 
 class AsrConfig(BaseModel):

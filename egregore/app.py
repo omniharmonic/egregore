@@ -275,7 +275,8 @@ class ZonePipeline:
     def __init__(self, zcfg: ZoneConfig, cfg: EgregoreConfig, *, forge: Forge,
                  governor: Governor, state: ConductorState,
                  bus: PartyBus | None = None,
-                 live: LiveSettings | None = None) -> None:
+                 live: LiveSettings | None = None,
+                 ring: RingBuffer | None = None) -> None:
         self.bus = bus or PartyBus()
         self.cfg = cfg
         # Read per cycle, so a settings change lands on the next clip.
@@ -289,7 +290,13 @@ class ZonePipeline:
         #: Set when this zone's audio comes from enrolled browsers.
         self.network_source = None
 
-        self.ring = RingBuffer.from_config(self.zone, cfg.privacy)
+        # Under the "commons" topology every zone is handed the same buffer,
+        # so the whole party is one conversation. The pipeline neither knows
+        # nor cares which case it is in.
+        self.shares_ring = ring is not None
+        self.ring = ring if ring is not None else RingBuffer.from_config(
+            self.zone, cfg.privacy
+        )
         self.weaver = Weaver(build_abstractor(cfg.weaver))
         self.mood = MoodIntegrator()
         self.loom = ZoneLoom.from_config(
@@ -373,7 +380,8 @@ class ZonePipeline:
     # -- the generation loop ------------------------------------------------
 
     async def run(self) -> None:
-        await self.ring.start()
+        if not self.shares_ring:
+            await self.ring.start()
         if self._source is not None:
             self._tasks.append(asyncio.create_task(self._source.run()))
         self._tasks.append(asyncio.create_task(self._generation_loop()))
@@ -469,7 +477,8 @@ class ZonePipeline:
         for t in self._tasks:
             with contextlib.suppress(asyncio.CancelledError):
                 await t
-        await self.ring.close()  # zeroes the buffer
+        if not self.shares_ring:
+            await self.ring.close()  # zeroes the buffer
         self._tasks.clear()
 
     def status(self) -> dict:
@@ -565,6 +574,13 @@ async def run_party(cfg: EgregoreConfig) -> None:
         throughput_floor_s=_throughput_floor(cfg, ladder, live),
     )
 
+    # One buffer for the whole party under "commons"; None means each zone
+    # keeps its own, which is the independent and mirror cases.
+    shared_ring = (
+        RingBuffer.from_config("party", cfg.privacy)
+        if cfg.continuity.topology == "commons" else None
+    )
+
     pipelines: dict[str, ZonePipeline] = {}
     bus = PartyBus()
 
@@ -653,7 +669,8 @@ async def run_party(cfg: EgregoreConfig) -> None:
 
     for z in cfg.zones:
         pipelines[z.id] = ZonePipeline(
-            z, cfg, forge=forge, governor=governor, state=state, bus=bus, live=live
+            z, cfg, forge=forge, governor=governor, state=state, bus=bus,
+            live=live, ring=shared_ring
         )
 
     import uvicorn
@@ -661,6 +678,13 @@ async def run_party(cfg: EgregoreConfig) -> None:
     server = uvicorn.Server(
         uvicorn.Config(app, host=cfg.serving.host, port=cfg.serving.port, log_level="warning")
     )
+
+    if cfg.continuity.topology == "mirror" and cfg.zones:
+        state.mirror_zone = cfg.zones[0].id
+        log.info("topology mirror: every screen follows zone %s", state.mirror_zone)
+    if shared_ring is not None:
+        await shared_ring.start()
+        log.info("topology commons: all zones share one transcript pool")
 
     governor.start()
     forge.start()
@@ -676,6 +700,8 @@ async def run_party(cfg: EgregoreConfig) -> None:
     finally:
         for p in pipelines.values():
             await p.close()
+        if shared_ring is not None:
+            await shared_ring.close()   # zeroes the shared buffer exactly once
         await forge.close()
         if not cfg.privacy.export_dream:
             log.info("export_dream is false; run `egregore wipe` to delete %d clips",
