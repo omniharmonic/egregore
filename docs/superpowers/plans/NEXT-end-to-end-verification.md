@@ -1,80 +1,116 @@
-# Next batch: prove the whole flow, end to end
+# Open work: prove it, then make it adaptive
 
-Raised 2026-08-28. Nothing here is a new feature. Every item is "we built it,
-we have not watched it work on real conversation", which is the only thing
-that matters now.
+Updated 2026-08-28. Ordered: finish the verification run first, then the
+tuning and interoperability work.
 
-## The claim to be proved
+---
 
-> Someone speaks in a room. That speech becomes a transcript. That transcript
-> becomes an abstracted prompt. That prompt becomes video. That video appears
-> on a screen. With more than one zone, each gets its own.
+## A. Verification still open (finish this first)
 
-No part of that has been observed whole. The pieces are each tested; the seam
-between them is not.
+### A1. Local diffusion from real speech — NOT YET SEEN
+Procedural and fal are both proved end to end (speech -> transcript ->
+abstracted prompt -> clip -> screen, with screenshots). ComfyUI/LTX is not.
+Run `presets/local-demo.yaml` with ComfyUI up, speak, and confirm a clip whose
+mtime is after the sentence that produced it. The 5-minute render makes this
+slow to observe, not hard.
 
-## 1. Real speech to real video, procedurally
+### A2. Multiple zones, each with its own video
+Topology tests pass at the unit level. Nobody has watched two screens showing
+different clips derived from two rooms' speech. Do `independent`, then
+`commons`, then `mirror`, and screenshot each.
 
-The shortest complete loop, and the one to establish first because it needs no
-GPU and no key.
+### A3. Microphone selection is not in the UI
+The zones panel says "set in the preset" and names the device `usb`, which is
+the schema's word for "a local audio device" and reads as "a USB device". On a
+laptop it is the built-in microphone.
 
-- Run `presets/live-mic.yaml`, speak, confirm in order: `buffer_tokens` rises,
-  `prompts_sent` rises, `validator_rejections` stays 0, a clip lands, the clip
-  appears in the manifest, the Lens plays it.
-- Capture the actual prompt that was synthesised from what was said. Confirm
-  by eye that it relates to the conversation and carries none of its words.
-- Screenshot the screen showing a clip that came from that sentence.
+Two things to build:
+- Name the device that was actually opened, from `sounddevice`, rather than
+  the config word for its kind.
+- Let the operator pick an input device from the dashboard. The device is
+  opened once at start-up, so either mark it restart-only and persist the
+  choice, or make `MicSource` able to reopen on a new device — the latter is
+  better and is what "adaptive" asks for.
 
-## 2. Local diffusion from real speech
+### A4. Reaching it from a phone
+Reported: `localhost:8420` did not open on a phone. `localhost` on a phone is
+the phone, so that is expected — the LAN address is what to open. But the
+system should not depend on someone knowing that:
+- Print the LAN address in the banner, not `<this-host>`.
+- Show it on the join page and dashboard (already partly done).
+- Check for the failure modes that actually bite: macOS firewall prompts,
+  wifi client isolation on guest networks, and a `serving.bind` that is not
+  `0.0.0.0`. Add a preflight to `egregore setup` that reports the reachable
+  address and warns when bound to loopback.
 
-- Same, with `presets/local-demo.yaml` and ComfyUI up, so LTX renders from a
-  transcript rather than from a canned prompt.
-- Confirm the clip on screen was generated after the sentence was spoken
-  (compare clip mtime against the log line for the prompt).
+---
 
-## 3. fal.ai from real speech
+## B. Procedural art: make it tunable, then make it listen
 
-- `FAL_KEY` is set. Run `scripts/verify_fal.py --generate` first to prove the
-  key bills, then `presets/fal-demo.yaml` end to end.
-- Confirm the ladder actually chose fal, not the procedural fallback: the clip
-  record should read `backend=fal tier=minimax-h3-max`.
-- Watch the ledger: reserved, then settled at the real price.
+The audio-reactive shader stack is the part that most wants knobs.
 
-## 4. Multiple zones, each with its own video
+### B1. Expose shader parameters
+Each lens has constants baked into its `.frag`. Lift the ones worth playing
+with into uniforms driven by config: feedback decay and zoom, flow speed and
+scale, glitch density and block size, chroma separation, CRT curvature and
+scanline weight, kaleidoscope segments, pixelsort threshold. Per zone, live,
+on the same push channel the lens stack already uses.
 
-- Two zones, `topology: independent`, both generating.
-- Confirm the two manifests differ, the two screens show different clips, and
-  each zone's clips derive from its own room's speech.
-- Then `commons` and `mirror`, confirming the documented difference is what
-  actually happens on screen.
+### B2. Presets for the look, not just the party
+Named looks ("deep", "brittle", "liquid", "broadcast") that set a stack plus
+its parameters together, so an operator changes the feel in one move.
 
-## 5. The input source is not trustworthy yet
+### B3. Drive parameters from the transcript
+The weaver already produces a ThemeObject with valence, intensity, movement
+and an elemental palette, and it currently only reaches the video prompt. The
+same object could set shader parameters, so the *compositing* responds to what
+the room is talking about, not only to how loud it is. This is the piece that
+would make the art feel authored by the room rather than decorated by it.
 
-Reported: tapping the microphone does not move the live meter, and the zones
-panel says `usb — system default input` on a Mac with no USB microphone
-attached.
+### B4. Confirm the composite, visibly
+The shaders run over the generated video, not instead of it. That is easy to
+lose track of and worth a side-by-side screenshot in the docs: same clip, no
+lenses; same clip, full stack.
 
-Two separate problems, at least:
+---
 
-- **The label is wrong.** `usb` is the schema's name for "a local audio
-  device", not "a device on the USB bus". On a laptop it is the built-in
-  microphone. The UI should say which device it actually opened, by name, and
-  say `built-in` where that is what it is. `MicConfig.type` is a frozen
-  Literal, so the fix is in how it is presented, not in what it is called on
-  disk.
-- **The meter may genuinely not be moving.** Note that `presets/party.yaml`
-  uses `mic.type: network`, which opens no local microphone at all — tapping
-  the laptop would correctly do nothing there. Establish which preset was
-  running before concluding anything. Then verify, for a `usb` zone, that
-  `MicSource` reaches `on_features` at all: put a level readout next to the
-  device name in the zones panel and watch it while tapping.
+## C. Split the pipeline across machines (DGX Spark)
 
-Also worth checking while in there: which device `sounddevice` actually opens
-when `device: null`, and whether it is the one the operator expects. Offer a
-device picker if it is not.
+Goal: default to one machine, but let any stage be pointed at another box on
+the LAN, so a Spark can do diffusion while this laptop keeps its GPU for WebGL
+and Parakeet.
 
-## How this gets closed
+Already remote-capable today, by URL:
+- **Video (local diffusion)** — `generation.comfyui_url`. Point it at the
+  Spark and it already works. Verify over the LAN and document it.
+- **Prompt abstraction** — `weaver.llm.base_url` speaks an OpenAI-compatible
+  API. An LLM on the Spark would replace the deterministic heuristic.
 
-Not by a green test run. By a screenshot of a screen playing a clip, next to
-the log line showing the sentence that produced it, for each of the four paths
-above.
+Not remote-capable yet:
+- **Transcription** — Parakeet is in-process. Wants an ASR service interface
+  so the Scribe can call a remote endpoint, mirroring how the forge calls a
+  remote ComfyUI.
+- **Health and discovery** — the dashboard should show each stage's endpoint
+  and whether it is reachable, so a split rig is diagnosable from one page.
+
+Design note: every one of these is already an interface, so this is mostly
+about adding a URL to config and a health row to the dashboard rather than
+restructuring anything. Keep the default as one machine, with every URL
+defaulting to localhost.
+
+---
+
+## D. Answered, for the record
+
+**What turns a transcript into a video prompt?** No model at all, by default.
+`weaver.engine: auto` uses `HeuristicAbstractor`, a deterministic
+keyword/lexicon mapper, because `weaver.llm.base_url` is unset. That is what
+produced "vast blue depth; inherited memory; a shape passed down" from talk of
+tide pools and a grandmother's shells. An `LLMAbstractor` exists and takes any
+OpenAI-compatible endpoint — which is the natural first thing to move to the
+Spark.
+
+**Did the shaders change during testing?** Yes, and not by design: the live
+lens-stack control was exercised against the running party, which left zones
+on whatever stack the test last set. Presets are unaffected; a restart returns
+to them.
