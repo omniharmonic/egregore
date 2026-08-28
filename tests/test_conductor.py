@@ -729,3 +729,27 @@ def test_a_named_screen_inherits_its_zones_lenses(cfg_home):
 
     # And the zone itself is unchanged.
     assert state.get_config("workshop")["lens_stack"] == ["glitch", "chroma", "crt"]
+
+
+def test_pacing_is_served_and_bounded(cfg_home):
+    """Playback rate and crossfade are what separate a loop that pulses from
+    one that flickers past, so both are live — and both are bounded, because
+    a rate of 0 stops the room and a 30-second crossfade is a still image."""
+    state = _zoned_state()
+    app = create_app(state, lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        assert client.get("/api/config?zone=main").json()["playback_rate"] == 1.0
+
+        assert client.post("/api/zones/main",
+                           json={"playback_rate": 0.6}).status_code == 200
+        assert client.get("/api/config?zone=main").json()["playback_rate"] == 0.6
+
+        assert client.post("/api/zones/main",
+                           json={"crossfade_override": 5.0}).status_code == 200
+        assert client.get("/api/config?zone=main").json()["crossfade_s"] == 5.0
+
+        for bad in ({"playback_rate": 0}, {"playback_rate": 9},
+                    {"playback_rate": "fast"}, {"crossfade_override": 60},
+                    {"crossfade_override": 0}):
+            assert client.post("/api/zones/main", json=bad).status_code == 400

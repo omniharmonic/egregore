@@ -882,6 +882,46 @@
       head.appendChild(name); head.appendChild(meta);
       box.appendChild(head);
 
+      // --- pacing, applied live ---
+      //
+      // The two controls that decide whether a loop pulses or flickers past:
+      // how fast each clip plays, and how long one dissolves into the next.
+      [['playback_rate', 'speed', 0.25, 1.5, 0.05, z.playback_rate || 1.0,
+        'below 1 the motion is languid and each clip holds longer'],
+       ['crossfade_override', 'crossfade', 0.5, 10.0, 0.25, z.crossfade_s || 2.0,
+        'seconds one clip takes to dissolve into the next']
+      ].forEach(function (spec) {
+        var key = spec[0], name = spec[1];
+        var row = document.createElement('div');
+        row.className = 'row';
+        var lab = document.createElement('label');
+        lab.className = 'key'; lab.textContent = name;
+        var r = document.createElement('input');
+        r.type = 'range'; r.min = spec[2]; r.max = spec[3]; r.step = spec[4];
+        r.value = spec[5]; r.style.minWidth = '220px';
+        var num = document.createElement('span');
+        num.className = 'val'; num.style.minWidth = '6ch';
+        num.textContent = (+r.value).toFixed(2);
+        var tag = document.createElement('span');
+        tag.className = 'tag live'; tag.textContent = 'live';
+        var note = document.createElement('span');
+        note.className = 'off'; note.textContent = spec[6];
+        r.addEventListener('input', function () {
+          num.textContent = (+r.value).toFixed(2);
+        });
+        r.addEventListener('change', function () {
+          var body = {}; body[key] = +r.value;
+          fetch('/api/zones/' + encodeURIComponent(zone), {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+        });
+        row.appendChild(lab); row.appendChild(r); row.appendChild(num);
+        row.appendChild(tag); row.appendChild(note);
+        box.appendChild(row);
+      });
+
       // --- effects, applied live ---
       var effLabel = document.createElement('div');
       effLabel.className = 'row';

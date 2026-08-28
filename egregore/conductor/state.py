@@ -265,6 +265,9 @@ class ConductorState:
 
         manifest = self._manifests.get(zone)
         crossfade_s = manifest.crossfade_s if manifest is not None else 2.0
+        override = zone_cfg.get("crossfade_override")
+        if isinstance(override, int | float) and override > 0:
+            crossfade_s = float(override)
 
         def inherit(key: str, default):
             """Screen value, else zone value, else default.
@@ -286,6 +289,10 @@ class ConductorState:
             "screen": screen,
             "lens_stack": inherit("lens_stack", []),
             "lens_params": inherit("lens_params", {}),
+            # Pacing. Below 1 the motion is languid and each clip holds the
+            # screen longer, which is what separates a loop that pulses from
+            # one that flickers past.
+            "playback_rate": inherit("playback_rate", 1.0),
             "loop_phase_offset": inherit("loop_phase_offset", 0.0),
             # Screen overrides zone, zone overrides the default — the same
             # precedence lens_stack uses. Reading this from the screen alone

@@ -49,6 +49,8 @@ asr:
 zones:
   - id: "main"
     mic: { type: "usb", device: null }   # null = system default input
+    playback_rate: 0.7
+    crossfade_s: 4.0
     lens_stack: ["flow", "feedback", "bloom", "crt"]
     screens: ["screen-1"]
 

@@ -138,6 +138,11 @@ export class Playlist {
     this.entries = [];
     this.revision = -1;
     this.crossfade = 2;
+    // Below 1 the motion becomes languid and each clip holds the screen for
+    // longer — the single strongest lever on whether a loop reads as pulsing
+    // or as frantic, because it lengthens the shot and slows the movement in
+    // it at the same time.
+    this.playbackRate = 1;
     // A per-screen crossfade from /api/config is more specific than the
     // zone-wide one in the manifest, so it must not be clobbered on refresh.
     this.crossfadePinned = false;
@@ -237,8 +242,16 @@ export class Deck {
     });
   }
 
+  get rate() {
+    const r = this.pl.playbackRate || 1;
+    return Math.max(0.25, Math.min(2, r));
+  }
+
   get crossfade() {
-    const d = this._dur(this.active);
+    // Clamp against how long the clip actually occupies the screen, not its
+    // media duration: slowed down, a clip can afford a longer dissolve, and
+    // that is most of what makes a cut feel like a breath instead of a jump.
+    const d = this._dur(this.active) / this.rate;
     return Math.max(0.2, Math.min(this.pl.crossfade || 2, d * 0.45));
   }
 
@@ -296,6 +309,10 @@ export class Deck {
   }
 
   _kick(el) {
+    // Re-apply on every kick: a browser resets playbackRate on some source
+    // changes, and a deck running at 1.0 when it should be at 0.6 is exactly
+    // the "too fast" complaint.
+    try { el.playbackRate = this.rate; } catch { /* older engines */ }
     if (el.paused) { const p = el.play(); if (p && p.catch) p.catch(() => {}); }
   }
 
@@ -315,6 +332,17 @@ export class Deck {
 
   /** Advance the scheduler + the mix ramp. */
   tick(dt) {
+    // Rate is applied here rather than only on load: an operator can change
+    // it mid-clip, and a video already playing is never re-kicked, so
+    // applying it at load alone meant the change was ignored until the next
+    // crossfade — which for a slow party is minutes away.
+    const r = this.rate;
+    for (const el of this.v) {
+      if (Math.abs((el.playbackRate || 1) - r) > 0.001) {
+        try { el.playbackRate = r; } catch { /* older engines */ }
+      }
+    }
+
     const a = this.active, b = 1 - this.active;
     const cur = this.v[a];
     const xf = this.crossfade;
@@ -335,15 +363,20 @@ export class Deck {
     if (!Number.isFinite(cur.duration) || cur.duration <= 0) return;
     const t = cur.currentTime;
     const dur = this._dur(a);
-    const lead = Math.min(3.5, dur * 0.35);
+    // The trigger is in wall time, not media time: the crossfade ramps in
+    // real seconds, so at half speed a media-time trigger would finish the
+    // dissolve halfway through the clip and leave it looping behind a
+    // finished fade.
+    const remaining = (dur - t) / this.rate;
+    const lead = Math.min(3.5, (dur / this.rate) * 0.35);
 
-    if (!this._pending && t >= dur - xf - lead) {
+    if (!this._pending && remaining <= xf + lead) {
       this._pending = true;
       const e = this.pl.pick();
       if (e) this._load(b, e); else this._pending = false;
     }
 
-    if (this._pending && t >= dur - xf) {
+    if (this._pending && remaining <= xf) {
       if (this.ready(b)) {
         this._kick(this.v[b]);
         this.fading = true;

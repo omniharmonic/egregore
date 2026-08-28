@@ -134,6 +134,11 @@ class ZoneConfig(BaseModel):
     mic: MicConfig = Field(default_factory=MicConfig)
     lens_stack: list[str] = Field(default_factory=lambda: ["flow", "feedback", "bloom"])
     continuity_mode: Literal["mosaic", "continuity"] | None = None  # None = party default
+    # Pacing. Below 1 the motion is languid and each clip holds the screen
+    # longer; together with a generous crossfade this is most of the
+    # difference between a loop that pulses and one that flickers past.
+    playback_rate: float = Field(1.0, ge=0.25, le=2.0)
+    crossfade_s: float | None = Field(None, gt=0.0, le=12.0)  # None = manifest default
     screens: list[str] = Field(default_factory=list)
 
 

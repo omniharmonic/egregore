@@ -44,14 +44,20 @@ asr:
 zones:
   - id: "kitchen"
     mic: { type: "network" }
+    playback_rate: 0.75
+    crossfade_s: 3.5
     lens_stack: ["flow", "feedback", "bloom"]
     screens: ["kitchen-screen"]
   - id: "dance-floor"
     mic: { type: "network" }
+    playback_rate: 0.75
+    crossfade_s: 3.5
     lens_stack: ["flow", "glitch", "chroma", "crt"]
     screens: ["dance-screen"]
   - id: "garden"
     mic: { type: "network" }
+    playback_rate: 0.75
+    crossfade_s: 3.5
     lens_stack: ["liquid", "feedback", "bloom"]
     screens: ["garden-screen"]
 

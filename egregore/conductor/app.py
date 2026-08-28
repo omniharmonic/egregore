@@ -545,6 +545,7 @@ def create_app(
                 "lens_params": client.get("lens_params", {}),
                 "audio_source": client.get("audio_source", "zone"),
                 "crossfade_s": client.get("crossfade_s", 2.0),
+                "playback_rate": client.get("playback_rate", 1.0),
                 "config_revision": state.config_revision(zone),
                 "screens": sorted(state.zone_config[zone].get("screens", {})),
                 "mic": source.get("mic", {}),
@@ -595,6 +596,31 @@ def create_app(
                         f"{lens} parameters must be numbers",
                     ) from exc
             allowed["lens_params"] = cleaned
+        if "playback_rate" in patch:
+            try:
+                rate = float(patch["playback_rate"])
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST, "playback_rate must be a number"
+                ) from exc
+            if not 0.25 <= rate <= 2.0:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "playback_rate must be between 0.25 and 2.0",
+                )
+            allowed["playback_rate"] = rate
+        if "crossfade_override" in patch:
+            try:
+                xf = float(patch["crossfade_override"])
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST, "crossfade must be a number"
+                ) from exc
+            if not 0.2 <= xf <= 12.0:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST, "crossfade must be between 0.2 and 12s"
+                )
+            allowed["crossfade_override"] = xf
         if "audio_source" in patch:
             source = str(patch["audio_source"])
             if source not in ("zone", "local_mic"):

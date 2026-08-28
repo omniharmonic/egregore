@@ -42,7 +42,7 @@ const state = {
   stack: DEFAULT_STACK.slice(),
   activePasses: DEFAULT_STACK.length,
   phase: 0,
-  crossfade: DEFAULT_CROSSFADE, crossfadePinned: false,
+  crossfade: DEFAULT_CROSSFADE, crossfadePinned: false, playbackRate: 1,
   glOk: false, glLost: false,
   fps: 0, emaMs: 16, passes: 0,
   overBudgetSince: 0, underBudgetSince: 0,
@@ -224,6 +224,9 @@ async function loadConfig() {
     state.crossfade = c.crossfade_s;
     state.crossfadePinned = true;
   }
+  if (c && typeof c.playback_rate === 'number' && c.playback_rate > 0) {
+    state.playbackRate = Math.max(0.25, Math.min(2, c.playback_rate));
+  }
   // The config may also route this screen to its own room's microphone
   // (`audio_source: "local_mic"` in the party YAML, §4). The URL param wins.
   if (!AUDIO_LOCAL && c && c.audio_source === 'local_mic' && features && !features.local) {
@@ -256,6 +259,7 @@ async function applyConfig() {
     playlist.phase = state.phase;
     playlist.crossfade = state.crossfade;
     playlist.crossfadePinned = !!state.crossfadePinned;
+    playlist.playbackRate = state.playbackRate;
   }
   if (features) features.phase = state.phase;
   if (state.stack.join('>') !== before) {
@@ -292,6 +296,7 @@ async function bootstrapData() {
   playlist.phase = state.phase;
   playlist.crossfade = state.crossfade;
   playlist.crossfadePinned = !!state.crossfadePinned;
+  playlist.playbackRate = state.playbackRate;
 
   const got = await playlist.refresh();
   if (!got) {
