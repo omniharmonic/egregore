@@ -36,6 +36,7 @@ import numpy as np
 from egregore.types import FeatureFrame
 
 from .features import compute_features
+from .utterance import UtteranceAssembler
 from .vad import SpeechGate, make_gate
 
 logger = logging.getLogger(__name__)
@@ -321,6 +322,7 @@ class MicSource:
         self.sample_rate = sample_rate
         self.block_ms = block_ms
         self.gate = gate if gate is not None else make_gate()
+        self._utterances = UtteranceAssembler(sample_rate=sample_rate)
         self._stopped = False
         self._prev_rms = 0.0
 
@@ -364,7 +366,13 @@ class MicSource:
         self._prev_rms = frame.rms
         await self.events.on_features(frame)
 
-        if self.events.on_speech_audio is not None and self.gate.is_speech(
-            pcm_bytes, self.sample_rate
-        ):
-            await self.events.on_speech_audio(pcm_bytes, self.sample_rate)
+        if self.events.on_speech_audio is not None:
+            # Accumulate into whole utterances. A recogniser handed one 33ms
+            # block returns half a syllable; handed a sentence it returns a
+            # sentence, which is the difference between a ring buffer full of
+            # disconnected tokens and one a theme can be found in.
+            utterance = self._utterances.add(
+                pcm_bytes, self.gate.is_speech(pcm_bytes, self.sample_rate)
+            )
+            if utterance is not None:
+                await self.events.on_speech_audio(utterance, self.sample_rate)

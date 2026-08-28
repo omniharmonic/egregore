@@ -30,6 +30,7 @@ from egregore.types import FeatureFrame
 
 from .features import compute_features
 from .sources import ZoneEvents
+from .utterance import UtteranceAssembler
 from .vad import make_gate
 
 log = logging.getLogger(__name__)
@@ -83,6 +84,8 @@ class NetworkSource:
         self._recent: dict[str, tuple[float, FeatureFrame]] = {}
         #: node id -> previous rms, so onset stays a per-node delta
         self._prev_rms: dict[str, float] = {}
+        #: node id -> its own utterance assembler
+        self._utterances: dict[str, UtteranceAssembler] = {}
 
     def stop(self) -> None:
         self._stopped = True
@@ -134,8 +137,14 @@ class NetworkSource:
         ]
         await self.events.on_features(merge_frames(live))
 
-        if self.events.on_speech_audio is not None and self.gate.is_speech(
-            pcm, sample_rate
-        ):
-            await self.events.on_speech_audio(pcm, sample_rate)
+        if self.events.on_speech_audio is not None:
+            # Per node, so two people talking at once do not have their
+            # sentences interleaved into one another.
+            assembler = self._utterances.get(node_id)
+            if assembler is None:
+                assembler = UtteranceAssembler(sample_rate=sample_rate)
+                self._utterances[node_id] = assembler
+            utterance = assembler.add(pcm, self.gate.is_speech(pcm, sample_rate))
+            if utterance is not None:
+                await self.events.on_speech_audio(utterance, sample_rate)
         return frame.rms

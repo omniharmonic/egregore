@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import secrets
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
@@ -290,6 +291,10 @@ class ZonePipeline:
         self.muted = False
         #: Set when this zone's audio comes from enrolled browsers.
         self.network_source = None
+        #: The most recent validated prompt, and when it was made. Operator
+        #: visibility only — never a transcript, only the abstraction of one.
+        self.last_prompt: str | None = None
+        self.last_prompt_at: float = 0.0
         #: False for a follower zone under the "mirror" topology. It still
         #: listens and contributes transcripts; it just does not commission
         #: video of its own, which is what makes mirror one stream for a
@@ -452,6 +457,13 @@ class ZonePipeline:
                     continue
                 if result.prompt is None:
                     continue
+                # The outbound prompt is the one string this system is
+                # willing to send to a third party, so showing it to the
+                # operator is strictly safer than what already happens to it.
+                # It is also the only way to see, from outside, that the
+                # video on screen came from what the room actually said.
+                self.last_prompt = result.prompt
+                self.last_prompt_at = time.time()
                 self.governor.record_generation(self.zone)
                 await self.forge.request(
                     zone=self.zone,
@@ -500,6 +512,8 @@ class ZonePipeline:
             "buffer_fragments": frags,
             "buffer_tokens": self.ring.token_count(),
             "prompts_sent": self.weaver.prompts_synthesized,
+            "last_prompt": self.last_prompt,
+            "last_prompt_at": self.last_prompt_at,
             "validator_rejections": self.weaver.rejections,
             "purges": self.weaver.purges_requested,
             "bleeds": self.bleeds,

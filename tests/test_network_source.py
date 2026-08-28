@@ -73,22 +73,44 @@ async def test_silence_still_produces_features_but_no_speech():
     assert c.audio == []
 
 
-async def test_gated_speech_reaches_the_scribe_with_its_sample_rate():
+async def test_speech_is_assembled_into_an_utterance_before_the_scribe_sees_it():
+    # One 50ms frame is half a syllable. The Scribe must be handed a whole
+    # utterance, released when the speaker pauses, or the ring buffer fills
+    # with disconnected tokens no theme can be found in.
     c = Collect()
     src = NetworkSource(c.events(), zone="k", gate=AlwaysSpeech())
-    payload = pcm(0.6)
-    await src.feed("n1", payload, 16000)
-    assert c.audio == [(payload, 16000)]
+    for _ in range(20):                       # ~1s of speech
+        await src.feed("n1", pcm(0.6), 16000)
+    assert c.audio == [], "must not forward mid-sentence"
+
+    src.gate = NeverSpeech()                  # the room falls quiet
+    for _ in range(20):
+        await src.feed("n1", pcm(0.0), 16000)
+    assert len(c.audio) == 1
+    utterance, rate = c.audio[0]
+    assert rate == 16000
+    assert len(utterance) > len(pcm(0.6)) * 15, "the whole utterance, not one frame"
 
 
-async def test_two_nodes_in_one_zone_both_reach_the_scribe():
-    # A room with two phones must hear the conversation, not one person.
+async def test_two_nodes_keep_their_utterances_separate():
+    # Two people talking at once must not have their sentences interleaved
+    # into one another before the recogniser sees them.
     c = Collect()
     src = NetworkSource(c.events(), zone="k", gate=AlwaysSpeech())
-    await src.feed("n1", pcm(0.4), 16000)
-    await src.feed("n2", pcm(0.5), 16000)
-    assert len(c.audio) == 2
+    for _ in range(20):
+        await src.feed("n1", pcm(0.4), 16000)
+        await src.feed("n2", pcm(0.5), 16000)
+    assert c.audio == []
     assert set(src.active_nodes()) == {"n1", "n2"}
+
+    src.gate = NeverSpeech()
+    for _ in range(20):
+        await src.feed("n1", pcm(0.0), 16000)
+        await src.feed("n2", pcm(0.0), 16000)
+    assert len(c.audio) == 2, "one utterance each, not one merged stream"
+
+
+
 
 
 def test_merge_takes_the_per_field_max():
