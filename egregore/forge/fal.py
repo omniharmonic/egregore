@@ -73,6 +73,9 @@ class FalModel:
     default_resolution: str
     #: Whole seconds this model will accept.
     allowed_durations_s: frozenset[int]
+    #: Which backend can drive this row. Only "fal" today; carried so the
+    #: catalogue can describe other providers without a second registry.
+    provider: str = "fal"
     #: Extra body fields sent on every request (model-specific knobs).
     extra_input: dict = field(default_factory=dict)
     #: Rough wall time for one clip; refined by observation once running.
