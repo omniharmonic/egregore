@@ -1,0 +1,62 @@
+# fal.ai cloud generation — MiniMax H3 Max, with the local box underneath.
+#
+# Ladder: fal -> ComfyUI/LTX on this machine -> procedural ffmpeg. A refusal,
+# an outage, or an exhausted budget drops a rung; the dream never starves.
+#
+#   export FAL_KEY="..."
+#
+# Cadence self-paces to fal's observed queue latency, so this same file behaves
+# correctly whether the queue is fast or backed up.
+
+party:
+  name: "Fal Dream"
+  duration_hours: 3.0
+
+aesthetic:
+  grammar: |
+    Abstract, symbolic, non-representational. Deep saturated color,
+    organic forms dissolving into geometric ones. Movement slow and
+    liquid, never cutting, never frantic. Suggest meaning without
+    depicting it: no readable text, no recognizable faces, no literal
+    objects from the described themes.
+  drift: 0.4
+
+generation:
+  backend: "fal"
+  fal_model: "minimax-h3-max"
+  resolution: "480p"        # $0.025/s on promo, $0.05/s standard
+  aspect_ratio: "16:9"
+  clip_duration_s: 5        # MiniMax will not go below 5s
+  fallback: "local"
+
+budget:
+  # A real ceiling. The Governor reserves against fal's *standard* price with a
+  # 2x safety factor, so a promo ending mid-party cannot breach this.
+  total_usd: 5.0
+
+continuity:
+  default_mode: "mosaic"    # no fal model here can continue its own clip
+  loop_half_life_min: 20
+  active_pool_max: 60
+
+asr:
+  engine: "fixture"
+
+zones:
+  - id: "main"
+    mic: { type: "fixture" }
+    lens_stack: ["flow", "feedback", "glitch", "crt"]
+    screens: ["screen-1"]
+
+screens:
+  - id: "screen-1"
+    loop_phase_offset: 0.0
+
+privacy:
+  ring_buffer_minutes: 5
+  signage_required: false
+
+serving:
+  bind: "127.0.0.1:8440"
+
+clip_store_dir: "var/clips-fal"

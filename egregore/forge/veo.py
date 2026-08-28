@@ -7,9 +7,11 @@ on beyond the operation's own lifetime.
 
 Two things are deliberate and load-bearing:
 
-* `generateAudio` is hard-wired to `false` (PRD V-3). The room supplies its
-  own sound, and video-only generation is 33-50% cheaper depending on tier.
-  There is no way to switch it on through this class.
+* PRD V-3 (the room supplies its own sound) is enforced at playback, not at
+  generation. Veo 3.x always generates audio and *rejects* a `generateAudio`
+  parameter, so sending one fails the request; the Lens plays every clip muted
+  instead. The corollary is economic: the video-only rate V-3 assumed does not
+  exist, so `COST_PER_SECOND_BY_RESOLUTION` carries the real, higher prices.
 * `max_plausible_cost` is a *worst case*, not an estimate. The Governor
   reserves against it so the hard ceiling holds even if the published price
   table is wrong (Architecture §2.5). The published per-second numbers are
@@ -53,13 +55,23 @@ TIER_QUALITY = "veo-3.1-quality"
 
 _TIERS = frozenset({TIER_LITE, TIER_FAST, TIER_QUALITY})
 
-#: Video-only US dollars per generated second, from Architecture §2.5.
-#: The doc flags these as needing verification against the Cloud console
-#: before a real party; `SAFETY_FACTOR` is what makes being wrong survivable.
+#: US dollars per generated second, per tier, per resolution — verified against
+#: the published Gemini API price list (August 2026). Architecture §2.5 carried
+#: a video-only table roughly 2-4x low; Veo 3.x always generates audio and has
+#: no video-only rate, so the discount those numbers assumed does not exist.
+#: Reserving against the old table under-reserved the Lite tier, which is the
+#: one thing the ceiling may never do (PRD B-2).
+COST_PER_SECOND_BY_RESOLUTION: dict[str, dict[str, Decimal]] = {
+    TIER_LITE: {"720p": Decimal("0.05"), "1080p": Decimal("0.08")},
+    TIER_FAST: {"720p": Decimal("0.10"), "1080p": Decimal("0.12"), "4k": Decimal("0.30")},
+    TIER_QUALITY: {"720p": Decimal("0.40"), "1080p": Decimal("0.40"), "4k": Decimal("0.60")},
+}
+
+#: Worst case across every resolution a tier offers. Reservations use this
+#: rather than the configured resolution so a resolution changed at runtime,
+#: or one the price table does not know, still cannot breach the ceiling.
 COST_PER_SECOND: dict[str, Decimal] = {
-    TIER_LITE: Decimal("0.03"),
-    TIER_FAST: Decimal("0.10"),
-    TIER_QUALITY: Decimal("0.20"),
+    tier: max(prices.values()) for tier, prices in COST_PER_SECOND_BY_RESOLUTION.items()
 }
 
 #: Reserve twice the published price. A cost model wrong by 2x still cannot
@@ -71,10 +83,14 @@ SAFETY_FACTOR = Decimal("2")
 #: whole mapping via the `model_for_tier` constructor argument rather than
 #: waiting for a release.
 DEFAULT_MODEL_IDS: dict[str, str] = {
-    TIER_LITE: "veo-3.1-fast-generate-preview",
+    TIER_LITE: "veo-3.1-lite-generate-preview",
     TIER_FAST: "veo-3.1-fast-generate-preview",
     TIER_QUALITY: "veo-3.1-generate-preview",
 }
+
+#: Tiers whose model can continue a video it generated (Veo 3.1 and 3.1 Fast).
+#: Lite cannot, so continuity mode on the Lite tier must not chain.
+EXTENDABLE_TIERS = frozenset({TIER_FAST, TIER_QUALITY})
 
 _LATENCY_S: dict[str, float] = {TIER_LITE: 45.0, TIER_FAST: 60.0, TIER_QUALITY: 120.0}
 
@@ -101,7 +117,9 @@ class VeoBackend:
         timeout_s: float = 600.0,
         request_timeout_s: float = 60.0,
         model_for_tier: dict[str, str] | None = None,
+        send_generate_audio: bool = False,
     ) -> None:
+        self.send_generate_audio = send_generate_audio
         self.name = name
         self.store = store
         # Constructor argument wins; otherwise the environment. Never logged.
@@ -135,7 +153,12 @@ class VeoBackend:
         )
 
     def max_plausible_cost(self, duration_s: int, tier: str) -> Decimal:
-        """Worst-case dollars for one request. Never an expectation."""
+        """Worst-case dollars for one request. Never an expectation.
+
+        Deliberately reserves against the tier's most expensive resolution
+        rather than the configured one: the ceiling must hold even if the
+        resolution changes under us or the price table is stale.
+        """
         per_second = COST_PER_SECOND.get(tier)
         if per_second is None:
             # Unknown tier: charge as if it were the most expensive one.
@@ -178,7 +201,7 @@ class VeoBackend:
         if tier not in _TIERS:
             raise ValueError(f"{self.name}: unknown tier {tier!r}")
 
-        payload = self._build_payload(prompt, duration_s, seed_image, extend_from)
+        payload = self._build_payload(prompt, duration_s, tier, seed_image, extend_from)
         model = self.model_for_tier.get(tier, DEFAULT_MODEL_IDS[TIER_QUALITY])
 
         started = time.monotonic()
@@ -225,6 +248,7 @@ class VeoBackend:
         self,
         prompt: str,
         duration_s: int,
+        tier: str,
         seed_image: bytes | None,
         extend_from: ClipRef | None,
     ) -> dict:
@@ -241,6 +265,13 @@ class VeoBackend:
             # video it generated itself, not an upload. A clip that did not
             # come from this backend in this process cannot be extended, and
             # saying so loudly beats silently generating an unrelated clip.
+            if tier not in EXTENDABLE_TIERS:
+                # Veo 3.1 Lite has no continuation mode. Failing here beats
+                # silently generating an unrelated clip into a movement chain.
+                raise RuntimeError(
+                    f"{self.name}: tier {tier!r} cannot extend video "
+                    f"(only {sorted(EXTENDABLE_TIERS)} support continuation)"
+                )
             uri = self._remote_uri.get(extend_from.id)
             if uri is None:
                 raise RuntimeError(
@@ -250,16 +281,21 @@ class VeoBackend:
                 )
             instance["video"] = {"uri": uri}
 
-        return {
-            "instances": [instance],
-            "parameters": {
-                "aspectRatio": self.aspect_ratio,
-                "resolution": self.resolution,
-                "durationSeconds": duration_s,
-                # PRD V-3. Not configurable, on purpose.
-                "generateAudio": False,
-            },
+        parameters: dict = {
+            "aspectRatio": self.aspect_ratio,
+            "resolution": self.resolution,
+            "durationSeconds": duration_s,
         }
+        if self.send_generate_audio:
+            # Veo 3.x generates audio unconditionally and *rejects* this
+            # parameter, so sending it fails the request outright. PRD V-3 is
+            # still honoured, one step later: the Lens plays every clip muted,
+            # so the room only ever hears itself. What V-3 can no longer buy is
+            # the video-only discount it assumed — that rate no longer exists,
+            # which is why the price table above went up. Kept as a flag for
+            # API surfaces (Veo 2, some proxies) that do accept it.
+            parameters["generateAudio"] = False
+        return {"instances": [instance], "parameters": parameters}
 
     def _http(self) -> httpx.AsyncClient:
         if self._client is None:

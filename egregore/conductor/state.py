@@ -100,6 +100,14 @@ class ConductorState:
         #: Operator control actions (freeze/mute/mode). Bound by the
         #: integration layer; None means the deployment exposes no controls.
         self.control_handler = control_handler
+        #: Bound by the integration layer. Receives a settings change and
+        #: applies the live subset to the running party, returning what it
+        #: actually changed. ``None`` means this deployment exposes no
+        #: runtime settings.
+        self.settings_handler: Callable[[dict], dict] | None = None
+        #: The config the party is actually running, as plain JSON, so the
+        #: settings page can show effective values next to the overrides.
+        self.effective_config: dict | None = None
 
         self._manifests: dict[str, Manifest] = {}
         self._latest_frame: dict[str, FeatureFrame] = {}

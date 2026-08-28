@@ -1,0 +1,137 @@
+{
+ "_comment": "LTX-Video 2B, speed-first. 512x320 / 8 steps ~= 96s per 4s clip on an M2 Max. Use when the room needs imagery to keep moving and softness is an acceptable trade.",
+ "1": {
+  "class_type": "UnetLoaderGGUF",
+  "inputs": {
+   "unet_name": "ltx-video-2b-v0.9-Q6_K.gguf"
+  }
+ },
+ "9": {
+  "class_type": "CLIPLoaderGGUF",
+  "inputs": {
+   "clip_name": "t5-v1_1-xxl-encoder-Q5_K_M.gguf",
+   "type": "ltxv"
+  }
+ },
+ "10": {
+  "class_type": "VAELoader",
+  "inputs": {
+   "vae_name": "ltx-video-2b-v0.9-vae.safetensors"
+  }
+ },
+ "11": {
+  "class_type": "ModelSamplingLTXV",
+  "inputs": {
+   "model": [
+    "1",
+    0
+   ],
+   "max_shift": 2.05,
+   "base_shift": 0.95
+  }
+ },
+ "2": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "text": "placeholder",
+   "clip": [
+    "9",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "positive"
+  }
+ },
+ "3": {
+  "class_type": "CLIPTextEncode",
+  "inputs": {
+   "text": "text, watermark, logo, human faces, letters, low quality, worst quality, deformed, distorted, jpeg artifacts",
+   "clip": [
+    "9",
+    0
+   ]
+  },
+  "_meta": {
+   "title": "negative"
+  }
+ },
+ "4": {
+  "class_type": "EmptyLTXVLatentVideo",
+  "inputs": {
+   "width": 512,
+   "height": 320,
+   "length": 97,
+   "batch_size": 1
+  }
+ },
+ "5": {
+  "class_type": "LTXVConditioning",
+  "inputs": {
+   "positive": [
+    "2",
+    0
+   ],
+   "negative": [
+    "3",
+    0
+   ],
+   "frame_rate": 24.0
+  }
+ },
+ "6": {
+  "class_type": "KSampler",
+  "inputs": {
+   "seed": 0,
+   "steps": 8,
+   "cfg": 3.0,
+   "sampler_name": "euler",
+   "scheduler": "normal",
+   "denoise": 1.0,
+   "model": [
+    "11",
+    0
+   ],
+   "positive": [
+    "5",
+    0
+   ],
+   "negative": [
+    "5",
+    1
+   ],
+   "latent_image": [
+    "4",
+    0
+   ]
+  }
+ },
+ "7": {
+  "class_type": "VAEDecode",
+  "inputs": {
+   "samples": [
+    "6",
+    0
+   ],
+   "vae": [
+    "10",
+    0
+   ]
+  }
+ },
+ "8": {
+  "class_type": "VHS_VideoCombine",
+  "inputs": {
+   "images": [
+    "7",
+    0
+   ],
+   "frame_rate": 24,
+   "format": "video/h264-mp4",
+   "filename_prefix": "egregore",
+   "save_output": true,
+   "loop_count": 0,
+   "pingpong": false
+  }
+ }
+}

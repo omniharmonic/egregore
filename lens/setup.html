@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="noindex">
+<title>Egregore — settings</title>
+<style>
+  :root {
+    --bg:     #050706;
+    --accent: #33ff66;
+    --dim:    #5d6f64;
+    --dimmer: #33413a;
+    --text:   #b7c9be;
+    --warn:   #ff4d4d;
+    --amber:  #d8a14a;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+            "DejaVu Sans Mono", "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; min-height: 100%;
+    background: var(--bg); color: var(--text);
+    font: 400 13px/1.5 var(--mono);
+    -webkit-font-smoothing: antialiased;
+    font-variant-ligatures: none;
+  }
+  main { padding: 26px 22px 90px; max-width: 1180px; margin: 0 auto; }
+
+  .wordmark {
+    margin: 0; white-space: pre; line-height: 0.88;
+    font-size: clamp(4px, 1.1vw, 10px);
+    color: var(--accent);
+    text-shadow: 0 0 14px rgba(51,255,102,.18);
+    -webkit-user-select: none; user-select: none;
+  }
+
+  .head {
+    display: flex; flex-wrap: wrap; gap: 8px 22px;
+    align-items: flex-end; justify-content: space-between;
+    margin: 12px 0 18px; padding-bottom: 10px;
+    border-bottom: 1px solid var(--dimmer);
+    color: var(--dim);
+  }
+  .head .who { color: var(--accent); }
+  a.navlink { color: var(--dim); text-decoration: none; }
+  a.navlink:hover, a.navlink:focus-visible { color: var(--accent); }
+
+  .panels { display: flex; flex-wrap: wrap; gap: 22px 26px; align-items: flex-start; }
+
+  /* Box-drawn panels, matching the dashboard's <pre> boxes but built from
+     borders so real form controls can live inside them. */
+  section.panel {
+    border: 1px solid var(--dimmer); padding: 16px 18px 18px;
+    min-width: 320px; flex: 1 1 340px; position: relative;
+  }
+  section.panel > h2 {
+    position: absolute; top: -.72em; left: 12px; margin: 0; padding: 0 .5em;
+    background: var(--bg); color: var(--accent);
+    font: inherit; font-weight: 400;
+  }
+  .hint { color: var(--dim); margin: 0 0 12px; }
+
+  .row {
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 3px 0; flex-wrap: wrap;
+  }
+  .row > label, .row > .key { color: var(--dim); min-width: 15ch; }
+  .val { color: var(--text); }
+  .t { color: var(--accent); }
+  .bad { color: var(--warn); }
+  .warn { color: var(--amber); }
+  .off { color: var(--dimmer); }
+
+  input, select, textarea {
+    font: inherit; color: var(--accent); background: transparent;
+    border: 0; border-bottom: 1px solid var(--dimmer); border-radius: 0;
+    padding: 1px 2px; outline: none; min-width: 8ch;
+  }
+  input:focus-visible, select:focus-visible, textarea:focus-visible,
+  button:focus-visible { border-bottom-color: var(--accent); outline: 1px solid var(--accent); }
+  select { color: var(--accent); }
+  select option { background: var(--bg); color: var(--text); }
+  textarea { width: 100%; border: 1px solid var(--dimmer); min-height: 3.4em; }
+  input[type="number"] { width: 10ch; }
+
+  button {
+    font: inherit; color: var(--accent); background: transparent;
+    border: 1px solid var(--dimmer); border-radius: 0; padding: 2px 10px;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { color: var(--dimmer); border-color: var(--dimmer); cursor: not-allowed; }
+  button.danger:hover:not(:disabled) { color: var(--warn); border-color: var(--warn); }
+
+  .tag { font-size: .85em; }
+  .tag.live { color: var(--accent); }
+  .tag.restart { color: var(--amber); }
+  .flash { color: var(--accent); opacity: 0; transition: opacity .18s linear; }
+  .flash.on { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { .flash { transition: none; } }
+
+  /* The one loud element on the page: what a model will reserve per clip. */
+  .reserve {
+    margin-top: 12px; padding: 8px 10px;
+    border-left: 2px solid var(--accent); color: var(--text);
+  }
+  .reserve.warn { border-left-color: var(--amber); color: var(--amber); }
+  .reserve.bad  { border-left-color: var(--warn); color: var(--warn); }
+
+  #pending {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    background: rgba(5,7,6,.97); border-top: 1px solid var(--amber);
+    color: var(--amber); padding: 10px 22px;
+  }
+  #pending[hidden] { display: none; }
+
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 3px 12px 3px 0; vertical-align: top; }
+  th { color: var(--dim); font-weight: 400; border-bottom: 1px solid var(--dimmer); }
+
+  #join {
+    position: fixed; inset: 0; z-index: 20; background: rgba(4,7,5,.97);
+    display: flex; align-items: center; justify-content: center;
+  }
+  #join[hidden] { display: none; }
+  #join .term { padding: 0 5vw; display: flex; flex-direction: column; gap: 1.35em; }
+  #join .wordmark { font-size: clamp(5.5px, 2.15vw, 22px); }
+  #joinForm { display: flex; align-items: center; font: inherit; }
+  #joinForm .label { color: var(--dim); white-space: pre; }
+  #joinPass {
+    font: inherit; color: var(--accent); background: transparent;
+    border: 0; outline: none; padding: 0; width: 24ch;
+  }
+  #joinErr { color: var(--warn); min-height: 1.5em; }
+  .cursor {
+    display: inline-block; width: .58em; height: 1.02em;
+    background: var(--accent); vertical-align: -.16em; margin-left: .2em;
+    animation: blink 1.06s steps(1, end) infinite;
+  }
+  @keyframes blink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .cursor { animation: none; } }
+</style>
+</head>
+<body>
+<main>
+<pre class="wordmark" role="img" aria-label="EGREGORE">████ ████ ███  ████ ████ ████ ███  ████
+█    █    █  █ █    █    █  █ █  █ █
+███  █ ██ ███  ███  █ ██ █  █ ███  ███
+█    █  █ █ █  █    █  █ █  █ █ █  █
+████ ████ █  █ ████ ████ ████ █  █ ████</pre>
+
+<div class="head">
+  <div><span class="who" id="party">—</span> <span>settings</span></div>
+  <div><a class="navlink" href="/static/status.html">status</a> · <span id="link">loading</span></div>
+</div>
+
+<div class="panels">
+
+  <section class="panel">
+    <h2>keys</h2>
+    <p class="hint">
+      Stored on the machine running Egregore, never sent to this page.<br>
+      To add or change one: <span class="t">egregore setup</span>
+    </p>
+    <div id="secrets"></div>
+  </section>
+
+  <section class="panel">
+    <h2>generation</h2>
+    <p class="hint">
+      <span class="tag live">live</span> applies to the next clip ·
+      <span class="tag restart">restart</span> applies on the next run
+    </p>
+    <div id="settings"></div>
+  </section>
+
+  <section class="panel" style="flex-basis: 100%;">
+    <h2>models</h2>
+    <p class="hint">
+      The price is what the spend ceiling is computed from, so a wrong figure
+      lets the party overspend. Check the reserve line before saving.
+    </p>
+    <table>
+      <thead><tr>
+        <th>key</th><th>provider</th><th>model id</th><th>prices</th>
+        <th>durations</th><th></th>
+      </tr></thead>
+      <tbody id="models"></tbody>
+    </table>
+
+    <div style="margin-top:20px; border-top:1px solid var(--dimmer); padding-top:14px;">
+      <div class="row">
+        <label for="mKey">key</label>
+        <input id="mKey" placeholder="kling-2-5" autocomplete="off">
+        <label for="mProvider">provider</label>
+        <select id="mProvider"><option value="fal">fal</option></select>
+      </div>
+      <div class="row">
+        <label for="mId">model id</label>
+        <input id="mId" style="min-width:34ch" placeholder="vendor/model/text-to-video"
+               autocomplete="off">
+      </div>
+      <div class="row">
+        <label for="mDurations">durations</label>
+        <input id="mDurations" style="min-width:14ch" placeholder="5, 10" autocomplete="off">
+        <span class="off">whole seconds, comma separated</span>
+      </div>
+      <div class="row"><span class="key">prices $/second</span></div>
+      <div id="mPrices"></div>
+      <div class="row"><button type="button" id="mAddPrice">add resolution</button></div>
+      <div class="row">
+        <label for="mExtra">extra input</label>
+      </div>
+      <textarea id="mExtra" placeholder='{"prompt_expansion_mode": "balanced"}'></textarea>
+
+      <div class="reserve" id="reserve">reserves —</div>
+
+      <div class="row" style="margin-top:12px">
+        <button type="button" id="mSave">save model</button>
+        <span class="bad" id="mErr"></span>
+      </div>
+    </div>
+  </section>
+
+</div>
+</main>
+
+<div id="pending" hidden></div>
+
+<div id="join" hidden>
+  <div class="term">
+    <pre class="wordmark" role="img" aria-label="EGREGORE">████ ████ ███  ████ ████ ████ ███  ████
+█    █    █  █ █    █    █  █ █  █ █
+███  █ ██ ███  ███  █ ██ █  █ ███  ███
+█    █  █ █ █  █    █  █ █  █ █ █  █
+████ ████ █  █ ████ ████ ████ █  █ ████</pre>
+    <form id="joinForm" autocomplete="off">
+      <span class="label">party password: </span>
+      <input id="joinPass" type="password" aria-label="Party password" spellcheck="false">
+      <span class="cursor"></span>
+    </form>
+    <div id="joinErr" role="status" aria-live="polite"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var $ = function (id) { return document.getElementById(id); };
+  var el = {
+    party: $('party'), link: $('link'), secrets: $('secrets'), settings: $('settings'),
+    models: $('models'), pending: $('pending'), reserve: $('reserve'),
+    join: $('join'), joinForm: $('joinForm'), joinPass: $('joinPass'), joinErr: $('joinErr'),
+    mKey: $('mKey'), mProvider: $('mProvider'), mId: $('mId'), mDurations: $('mDurations'),
+    mPrices: $('mPrices'), mAddPrice: $('mAddPrice'), mExtra: $('mExtra'),
+    mSave: $('mSave'), mErr: $('mErr')
+  };
+
+  // Above this, a per-clip reservation is far likelier to be a typo than
+  // a real price. Chosen well above the most expensive model we ship
+  // (Veo 4k, 8s: $9.60) and well below a slipped decimal.
+  var IMPLAUSIBLE_RESERVE = 50;
+
+  var state = { settings: null, secrets: null, models: null, pending: {} };
+
+  // Every control the page can offer. `path` is the dotted key the server
+  // uses, so live/restart classification comes from the server rather than
+  // being duplicated here — the two can never drift apart.
+  var FIELDS = [
+    { path: 'generation.backend',      label: 'backend',    type: 'select',
+      options: ['auto', 'fal', 'veo', 'local', 'procedural'] },
+    { path: 'generation.fal_model',    label: 'fal model',  type: 'model' },
+    { path: 'generation.fallback',     label: 'fallback',   type: 'select',
+      options: ['procedural', 'local', 'fal', 'mock', 'none'] },
+    { path: 'generation.comfyui_url',  label: 'comfyui url', type: 'text' },
+    { path: 'generation.resolution',   label: 'resolution', type: 'text' },
+    { path: 'generation.clip_duration_s', label: 'clip seconds', type: 'number',
+      min: 2, max: 8, step: 1 },
+    { path: 'aesthetic.drift',         label: 'drift',      type: 'number',
+      min: 0, max: 1, step: 0.05 },
+    { path: 'continuity.default_mode', label: 'continuity', type: 'select',
+      options: ['mosaic', 'continuity'] },
+    { path: 'budget.total_usd',        label: 'budget $',   type: 'number',
+      min: 0, step: 0.5 },
+    { path: 'asr.engine',              label: 'asr',        type: 'select',
+      options: ['fixture', 'parakeet', 'faster-whisper'] },
+    { path: 'cadence_floor_s',         label: 'cadence floor', type: 'number',
+      min: 0, step: 5, note: '0 = follow the backend' }
+  ];
+
+  function dig(obj, path) {
+    var node = obj, parts = path.split('.'), i;
+    for (i = 0; i < parts.length; i++) {
+      if (node === null || typeof node !== 'object' || !(parts[i] in node)) return undefined;
+      node = node[parts[i]];
+    }
+    return node;
+  }
+
+  function nest(path, value) {
+    var parts = path.split('.'), out = {}, node = out, i;
+    for (i = 0; i < parts.length - 1; i++) { node[parts[i]] = {}; node = node[parts[i]]; }
+    node[parts[parts.length - 1]] = value;
+    return out;
+  }
+
+  function kindOf(path) {
+    if (state.settings.live_keys.indexOf(path) !== -1) return 'live';
+    if (state.settings.restart_keys.indexOf(path) !== -1) return 'restart';
+    return null;
+  }
+
+  // ---- load -------------------------------------------------------------
+
+  function getJSON(url) {
+    return fetch(url, { credentials: 'same-origin', cache: 'no-store' })
+      .then(function (r) {
+        if (r.status === 401 || r.status === 403) { var e = new Error('locked'); e.locked = true; throw e; }
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      });
+  }
+
+  function loadAll() {
+    return Promise.all([
+      getJSON('/api/settings'), getJSON('/api/secrets'), getJSON('/api/models')
+    ]).then(function (all) {
+      state.settings = all[0]; state.secrets = all[1]; state.models = all[2];
+      el.join.hidden = true;
+      el.link.textContent = 'linked';
+      el.link.className = 't';
+      var name = dig(state.settings.effective, 'party.name');
+      el.party.textContent = name || 'egregore';
+      renderSecrets(); renderSettings(); renderModels(); renderPrices();
+    }).catch(function (err) {
+      if (err && err.locked) { el.join.hidden = false; el.joinPass.focus(); return; }
+      el.link.textContent = 'no route to host';
+      el.link.className = 'bad';
+    });
+  }
+
+  // ---- keys -------------------------------------------------------------
+
+  function renderSecrets() {
+    el.secrets.textContent = '';
+    Object.keys(state.secrets).forEach(function (name) {
+      var present = state.secrets[name];
+      var row = document.createElement('div');
+      row.className = 'row';
+      var k = document.createElement('span');
+      k.className = 'key'; k.style.minWidth = '24ch'; k.textContent = name;
+      var v = document.createElement('span');
+      v.className = present ? 't' : 'off';
+      v.textContent = present ? 'detected' : 'not set';
+      row.appendChild(k); row.appendChild(v);
+      el.secrets.appendChild(row);
+    });
+  }
+
+  // ---- settings ---------------------------------------------------------
+
+  function renderSettings() {
+    el.settings.textContent = '';
+    FIELDS.forEach(function (field) {
+      var kind = kindOf(field.path);
+      if (!kind) return;  // the server does not accept this key; do not offer it
+
+      var row = document.createElement('div');
+      row.className = 'row';
+
+      var label = document.createElement('label');
+      label.textContent = field.label;
+      label.htmlFor = 'f-' + field.path;
+      row.appendChild(label);
+
+      var current = dig(state.settings.overrides, field.path);
+      if (current === undefined) current = dig(state.settings.effective, field.path);
+
+      var input;
+      if (field.type === 'select' || field.type === 'model') {
+        input = document.createElement('select');
+        var opts = field.type === 'model' ? Object.keys(state.models) : field.options;
+        opts.forEach(function (o) {
+          var opt = document.createElement('option');
+          opt.value = o; opt.textContent = o;
+          if (String(current) === o) opt.selected = true;
+          input.appendChild(opt);
+        });
+      } else {
+        input = document.createElement('input');
+        input.type = field.type === 'number' ? 'number' : 'text';
+        if (field.min !== undefined) input.min = field.min;
+        if (field.max !== undefined) input.max = field.max;
+        if (field.step !== undefined) input.step = field.step;
+        input.value = current === undefined || current === null ? '' : String(current);
+      }
+      input.id = 'f-' + field.path;
+      row.appendChild(input);
+
+      var tag = document.createElement('span');
+      tag.className = 'tag ' + kind;
+      tag.textContent = kind;
+      row.appendChild(tag);
+
+      if (field.note) {
+        var note = document.createElement('span');
+        note.className = 'off'; note.textContent = field.note;
+        row.appendChild(note);
+      }
+
+      var flash = document.createElement('span');
+      flash.className = 'flash'; flash.textContent = 'saved';
+      row.appendChild(flash);
+
+      input.addEventListener('change', function () {
+        var raw = input.value;
+        if (raw === '') return;
+        var value = field.type === 'number' ? Number(raw) : raw;
+        save(field.path, value, kind, flash);
+      });
+
+      el.settings.appendChild(row);
+    });
+    renderPending();
+  }
+
+  function save(path, value, kind, flash) {
+    fetch('/api/settings', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(nest(path, value))
+    }).then(function (r) {
+      return r.json().then(function (body) { return { ok: r.ok, body: body }; });
+    }).then(function (res) {
+      if (!res.ok) {
+        el.link.textContent = String(res.body.detail || 'rejected');
+        el.link.className = 'bad';
+        return;
+      }
+      flash.classList.add('on');
+      setTimeout(function () { flash.classList.remove('on'); }, 900);
+      if (kind === 'restart') { state.pending[path] = value; renderPending(); }
+      state.settings.overrides = res.body.overrides;
+    });
+  }
+
+  function renderPending() {
+    var keys = Object.keys(state.pending);
+    if (!keys.length) { el.pending.hidden = true; return; }
+    el.pending.hidden = false;
+    el.pending.textContent =
+      keys.length + (keys.length === 1 ? ' change saved' : ' changes saved') +
+      ' — restart egregore to apply: ' + keys.join(', ');
+  }
+
+  // ---- models -----------------------------------------------------------
+
+  function renderModels() {
+    el.models.textContent = '';
+    Object.keys(state.models).sort().forEach(function (key) {
+      var m = state.models[key];
+      var tr = document.createElement('tr');
+
+      function cell(text, cls) {
+        var td = document.createElement('td');
+        td.textContent = text; if (cls) td.className = cls;
+        tr.appendChild(td); return td;
+      }
+      cell(key, 't');
+      cell(m.provider);
+      cell(m.model_id);
+      cell(Object.keys(m.price_per_second).map(function (r) {
+        return r + ' $' + m.price_per_second[r];
+      }).join('  '));
+      cell(m.allowed_durations_s.join(', ') + 's');
+
+      var td = document.createElement('td');
+      var btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'danger'; btn.textContent = 'delete';
+      if (m.builtin) {
+        btn.disabled = true;
+        btn.title = 'ships with Egregore — add an entry with the same key to override it';
+      } else {
+        btn.addEventListener('click', function () { removeModel(key); });
+      }
+      td.appendChild(btn); tr.appendChild(td);
+      el.models.appendChild(tr);
+    });
+  }
+
+  function priceRows() {
+    return Array.prototype.slice.call(el.mPrices.querySelectorAll('.price-row'))
+      .map(function (row) {
+        return {
+          res: row.querySelector('.p-res').value.trim(),
+          price: Number(row.querySelector('.p-val').value)
+        };
+      })
+      .filter(function (r) { return r.res !== ''; });
+  }
+
+  function addPriceRow(res, price) {
+    var row = document.createElement('div');
+    row.className = 'row price-row';
+    var r = document.createElement('input');
+    r.className = 'p-res'; r.placeholder = '720P'; r.value = res || '';
+    r.style.minWidth = '8ch';
+    var dollar = document.createElement('span');
+    dollar.className = 'off'; dollar.textContent = '$';
+    var v = document.createElement('input');
+    v.className = 'p-val'; v.type = 'number'; v.step = '0.001'; v.min = '0';
+    v.placeholder = '0.05'; v.value = price || '';
+    var drop = document.createElement('button');
+    drop.type = 'button'; drop.textContent = 'remove';
+    drop.addEventListener('click', function () { row.remove(); renderReserve(); });
+    row.appendChild(r); row.appendChild(dollar); row.appendChild(v); row.appendChild(drop);
+    r.addEventListener('input', renderReserve);
+    v.addEventListener('input', renderReserve);
+    el.mPrices.appendChild(row);
+    renderReserve();
+  }
+
+  function renderPrices() {
+    if (!el.mPrices.querySelector('.price-row')) addPriceRow('', '');
+  }
+
+  function durations() {
+    return el.mDurations.value.split(',')
+      .map(function (d) { return parseInt(d.trim(), 10); })
+      .filter(function (d) { return !isNaN(d) && d > 0; });
+  }
+
+  // The signature element. The price typed here is what the spend ceiling is
+  // computed from, so a misplaced decimal would otherwise weaken the ceiling
+  // silently. Showing the resulting reservation makes that visible instead.
+  function renderReserve() {
+    var prices = priceRows().map(function (r) { return r.price; })
+      .filter(function (p) { return !isNaN(p); });
+    var worst = prices.length ? Math.max.apply(null, prices) : 0;
+    var dur = durations().length ? Math.max.apply(null, durations()) : 0;
+    var budget = Number(dig(state.settings && state.settings.effective, 'budget.total_usd') || 0);
+    var reserve = worst * dur * 2;   // SAFETY_FACTOR
+
+    el.reserve.className = 'reserve';
+    if (!worst || !dur) {
+      el.reserve.textContent = 'reserves — enter a price and a duration';
+      el.reserve.classList.add('warn');
+      return;
+    }
+    var head = 'reserves $' + reserve.toFixed(2) + ' per ' + dur + 's clip';
+
+    // A reservation this large is almost always a misplaced decimal point
+    // rather than a real price, and it is worth saying so even on a party
+    // with no budget set — where the size check below cannot fire at all.
+    if (reserve > IMPLAUSIBLE_RESERVE) {
+      el.reserve.textContent = head + ' — that looks like a decimal-point slip';
+      el.reserve.classList.add('bad');
+      return;
+    }
+    if (budget <= 0) {
+      el.reserve.textContent =
+        head + ' · budget is $0, so no metered backend runs at all';
+      el.reserve.classList.add('warn');
+      return;
+    }
+    if (reserve > budget) {
+      el.reserve.textContent =
+        head + ' · more than the whole $' + budget.toFixed(2) + ' budget';
+      el.reserve.classList.add('bad');
+      return;
+    }
+    el.reserve.textContent =
+      head + ' · budget $' + budget.toFixed(2) +
+      ' allows ' + Math.floor(budget / reserve) + ' in flight';
+  }
+
+  function saveModel() {
+    el.mErr.textContent = '';
+    var prices = {};
+    priceRows().forEach(function (r) { prices[r.res] = String(r.price); });
+    var extra = {};
+    if (el.mExtra.value.trim()) {
+      try { extra = JSON.parse(el.mExtra.value); }
+      catch (e) { el.mErr.textContent = 'extra input is not valid JSON'; return; }
+    }
+    var rows = priceRows();
+    var body = {
+      key: el.mKey.value.trim(),
+      provider: el.mProvider.value,
+      model_id: el.mId.value.trim(),
+      price_per_second: prices,
+      default_resolution: rows.length ? rows[0].res : '',
+      allowed_durations_s: durations(),
+      extra_input: extra
+    };
+    fetch('/api/models', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      return r.json().then(function (b) { return { ok: r.ok, body: b }; });
+    }).then(function (res) {
+      if (!res.ok) { el.mErr.textContent = String(res.body.detail || 'rejected'); return; }
+      el.mKey.value = ''; el.mId.value = ''; el.mDurations.value = '';
+      el.mExtra.value = ''; el.mPrices.textContent = ''; addPriceRow('', '');
+      loadAll();
+    });
+  }
+
+  function removeModel(key) {
+    fetch('/api/models/' + encodeURIComponent(key),
+          { method: 'DELETE', credentials: 'same-origin' })
+      .then(function () { loadAll(); });
+  }
+
+  el.mAddPrice.addEventListener('click', function () { addPriceRow('', ''); });
+  el.mSave.addEventListener('click', saveModel);
+  el.mDurations.addEventListener('input', renderReserve);
+
+  el.joinForm.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    el.joinErr.textContent = '';
+    fetch('/api/join', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password: el.joinPass.value })
+    }).then(function (r) {
+      if (!r.ok) { el.joinErr.textContent = 'denied.'; return; }
+      el.joinPass.value = '';
+      loadAll();
+    }).catch(function () { el.joinErr.textContent = 'no route to host.'; });
+  });
+
+  loadAll();
+})();
+</script>
+</body>
+</html>

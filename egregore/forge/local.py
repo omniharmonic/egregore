@@ -112,8 +112,16 @@ class ComfyUIBackend:
         poll_interval_s: float = 2.0,
         timeout_s: float = 900.0,
         health_timeout_s: float = 2.0,
+        initial_latency_s: float = 60.0,
+        latency_smoothing: float = 0.3,
     ) -> None:
         self.name = name
+        # Seed for estimated_latency() until real timings arrive; every
+        # completed generation moves it toward what this box actually does.
+        self.initial_latency_s = float(initial_latency_s)
+        self.latency_smoothing = float(latency_smoothing)
+        self._latency_s = float(initial_latency_s)
+        self._observed = 0
         self.store = store
         self.base_url = base_url.rstrip("/")
         self.workflow = copy.deepcopy(workflow) if workflow is not None else copy.deepcopy(
@@ -143,10 +151,28 @@ class ComfyUIBackend:
         return Decimal("0")
 
     def estimated_latency(self, tier: str) -> timedelta:
-        # LTX-2 on a consumer GPU box; the Spark is minutes, not seconds
-        # (Architecture §2.6), so operators should override the cadence
-        # expectations rather than this number.
-        return timedelta(seconds=60)
+        """What this box actually takes to render a clip, as observed.
+
+        The same graph is minutes on a laptop's integrated GPU and seconds on a
+        datacentre card, so a hardcoded constant is wrong everywhere. Each
+        completed generation folds its wall time into an EWMA; until the first
+        one lands this returns ``initial_latency_s``. The Governor paces the
+        generation loop on this, which is what lets one config behave sanely on
+        very different hardware (Architecture §2.6).
+        """
+        del tier  # one tier today; latency is a property of the box, not the tier
+        return timedelta(seconds=self._latency_s)
+
+    def _observe_latency(self, wall_s: float) -> None:
+        """Fold one observed render time into the EWMA."""
+        if wall_s <= 0:
+            return
+        if self._observed == 0:
+            self._latency_s = wall_s
+        else:
+            a = self.latency_smoothing
+            self._latency_s = (a * wall_s) + ((1.0 - a) * self._latency_s)
+        self._observed += 1
 
     async def health(self) -> BackendHealth:
         try:
@@ -195,12 +221,15 @@ class ComfyUIBackend:
                 tmp_path.unlink()
             raise
 
+        wall_s = time.monotonic() - started
+        self._observe_latency(wall_s)
         log.info(
-            "local clip backend=%s zone=%s duration=%ds wall=%.1fs",
+            "local clip backend=%s zone=%s duration=%ds wall=%.1fs latency_est=%.1fs",
             self.name,
             zone,
             duration_s,
-            time.monotonic() - started,
+            wall_s,
+            self._latency_s,
         )
         return ref
 

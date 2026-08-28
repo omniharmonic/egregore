@@ -28,13 +28,14 @@ import asyncio
 import logging
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, status
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from starlette.staticfiles import StaticFiles
 
 from egregore.conductor.auth import COOKIE_NAME, RequireParty, check_password, sign, ws_authorized
 from egregore.conductor.state import ConductorState
+from egregore.config import store as config_store
 from egregore.types import Manifest
 
 logger = logging.getLogger(__name__)
@@ -266,5 +267,95 @@ def create_app(
         if config is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown zone {zone!r}")
         return config
+
+    # -- configuration ------------------------------------------------------
+    #
+    # Reconfiguring the system is a higher trust level than watching it, so
+    # these demand the password even when party auth is disabled. Where no
+    # password exists at all, they answer only on loopback -- otherwise
+    # disabling auth for guests would also hand them the spend ceiling.
+
+    def require_operator(request: Request) -> None:
+        if password:
+            require_party(request)
+            return
+        client = request.client.host if request.client else ""
+        if client not in ("127.0.0.1", "::1", "localhost"):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "settings need a party password, or a request from this machine",
+            )
+
+    def _split_keys(overrides: dict) -> tuple[list[str], list[str]]:
+        live, restart = [], []
+        for dotted in config_store.dotted_keys(overrides):
+            if dotted in config_store.LIVE_KEYS:
+                live.append(dotted)
+            elif dotted in config_store.RESTART_KEYS:
+                restart.append(dotted)
+        return sorted(live), sorted(restart)
+
+    @app.get("/api/settings", dependencies=[Depends(require_operator)])
+    async def get_settings() -> dict:
+        overrides = await asyncio.to_thread(config_store.load_settings)
+        return {
+            "overrides": overrides,
+            "live_keys": sorted(config_store.LIVE_KEYS),
+            "restart_keys": sorted(config_store.RESTART_KEYS),
+            "effective": state.effective_config or {},
+        }
+
+    @app.post("/api/settings", dependencies=[Depends(require_operator)])
+    async def post_settings(overrides: dict) -> dict:
+        try:
+            await asyncio.to_thread(config_store.validate_overrides, overrides)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+        live, restart = _split_keys(overrides)
+        current = await asyncio.to_thread(config_store.load_settings)
+        merged = config_store.deep_merge(current, overrides)
+        await asyncio.to_thread(config_store.save_settings, merged)
+
+        if live and state.settings_handler is not None:
+            state.settings_handler(overrides)
+        return {"applied_live": live, "restart_required": restart, "overrides": merged}
+
+    @app.get("/api/secrets", dependencies=[Depends(require_operator)])
+    async def get_secrets() -> dict[str, bool]:
+        # Booleans only. No branch of this handler can reach a value.
+        return await asyncio.to_thread(config_store.secrets_present)
+
+    @app.get("/api/models", dependencies=[Depends(require_operator)])
+    async def get_models() -> dict:
+        catalogue = await asyncio.to_thread(config_store.load_catalogue)
+        return config_store.catalogue_to_json(catalogue)
+
+    @app.post("/api/models", dependencies=[Depends(require_operator)])
+    async def post_model(entry: dict) -> dict:
+        payload = dict(entry)
+        key = str(payload.pop("key", "")).strip()
+        if not key:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "model needs a key")
+        try:
+            model = config_store.model_from_json(payload)
+        except (KeyError, TypeError, ValueError, ArithmeticError) as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        catalogue = await asyncio.to_thread(config_store.load_catalogue)
+        catalogue[key] = model
+        await asyncio.to_thread(config_store.save_catalogue, catalogue)
+        return config_store.catalogue_to_json({key: model})
+
+    @app.delete("/api/models/{key}", dependencies=[Depends(require_operator)])
+    async def delete_model(key: str) -> dict:
+        if key in config_store.builtin_keys():
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"{key!r} ships with Egregore and cannot be deleted; override it instead",
+            )
+        catalogue = await asyncio.to_thread(config_store.load_catalogue)
+        catalogue.pop(key, None)
+        await asyncio.to_thread(config_store.save_catalogue, catalogue)
+        return {"deleted": key}
 
     return app

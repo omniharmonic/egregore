@@ -366,13 +366,18 @@ def test_factory_rejects_unknown_engine():
         make_transcriber("wav2vec", "en")
 
 
-def test_factory_parakeet_raises_helpfully_without_nemo():
+def test_factory_parakeet_raises_helpfully_without_nemo(monkeypatch, tmp_path):
     if "nemo" in sys.modules or _importable("nemo"):  # pragma: no cover - dev box with nemo
         pytest.skip("nemo is installed; the missing-dependency path cannot be exercised")
+    # Parakeet prefers a local ONNX export and only falls back to NeMo. Point
+    # the ONNX lookup at an empty directory so the no-backend-at-all path is
+    # the one under test even on a box that has the ONNX weights installed.
+    monkeypatch.setenv("EGREGORE_PARAKEET_ONNX_DIR", str(tmp_path / "absent"))
     with pytest.raises(RuntimeError) as exc:
         make_transcriber("parakeet", "en")
     msg = str(exc.value)
     assert "nemo_toolkit" in msg
+    assert "onnx-asr" in msg
     assert "fixture" in msg
 
 

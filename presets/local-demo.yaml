@@ -1,0 +1,53 @@
+# Local demo — real LTX-Video diffusion on this machine, zero cloud, zero cost.
+# Backend ladder: ComfyUI/LTX-2B first, procedural renderer as the failover so
+# the dream never starves while the GPU is mid-clip.
+
+party:
+  name: "Local Dream"
+  duration_hours: 1.0
+
+aesthetic:
+  grammar: |
+    Abstract, symbolic, non-representational. Deep saturated color,
+    organic forms dissolving into geometric ones. Movement slow and
+    liquid, never cutting, never frantic. Suggest meaning without
+    depicting it: no readable text, no recognizable faces, no literal
+    objects from the described themes.
+  drift: 0.4
+
+generation:
+  backend: "local"          # ComfyUI + LTX-Video 2B on this box
+  clip_duration_s: 4        # 97 latent frames — the fastest LTXV rung
+  fallback: "procedural"    # ffmpeg renderer keeps the loop fed
+  comfyui_url: "http://127.0.0.1:8188"
+
+budget:
+  total_usd: 0              # nothing can reach the cloud
+
+continuity:
+  default_mode: "mosaic"
+  loop_half_life_min: 20
+  active_pool_max: 60
+
+asr:
+  engine: "fixture"
+
+zones:
+  - id: "main"
+    mic: { type: "fixture" }
+    lens_stack: ["flow", "feedback", "glitch", "crt"]
+    screens: ["screen-1"]
+
+screens:
+  - id: "screen-1"
+    loop_phase_offset: 0.0
+
+privacy:
+  ring_buffer_minutes: 5
+  signage_required: false
+
+serving:
+  bind: "127.0.0.1:8430"
+
+clip_store_dir: "var/clips-local"
+demo_time_scale: 8

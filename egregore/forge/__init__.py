@@ -21,6 +21,7 @@ The ladder is the list order: first rung that is healthy, affordable and
 working wins. An exhausted ladder is a normal outcome, not an error.
 """
 
+from .fal import FAL_MODELS, FalBackend, FalModel
 from .forge import ATTEMPTS_PER_BACKEND, Forge, ForgeStats, GenerationJob
 from .local import DEFAULT_WORKFLOW, TIER_LTX2, ComfyUIBackend
 from .mock import (
@@ -49,6 +50,7 @@ __all__ = [
     "ATTEMPTS_PER_BACKEND",
     "COST_PER_SECOND",
     "DEFAULT_WORKFLOW",
+    "FAL_MODELS",
     "SAFETY_FACTOR",
     "TIER_FAST",
     "TIER_LITE",
@@ -57,6 +59,8 @@ __all__ = [
     "VARIANTS",
     "ClipStore",
     "ComfyUIBackend",
+    "FalBackend",
+    "FalModel",
     "Forge",
     "ForgeStats",
     "GenerationJob",
