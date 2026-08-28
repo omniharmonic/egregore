@@ -1071,7 +1071,10 @@ async def test_comfy_health_up_and_capabilities(store: ClipStore) -> None:
     caps = backend.capabilities
     assert caps.allowed_durations_s == frozenset({4, 6, 8})
     assert caps.supports_native_extend is False  # continuity via seed frames only
-    assert caps.supports_image_seed is True
+    # Seeding is offered only when a seeded graph is configured; this backend
+    # has none, and saying False is the difference between declining a seed
+    # and accepting one it will silently drop.
+    assert caps.supports_image_seed is False
     assert caps.tiers == frozenset({"ltx-2"})
     assert backend.max_plausible_cost(8, "ltx-2") == Decimal("0")  # PRD V-4 / B-6
     await backend.close()
@@ -1479,3 +1482,140 @@ async def test_comfy_cancel_names_the_prompts_it_queued(store: ClipStore) -> Non
     backend._inflight.update({"a", "b"})
     await backend.cancel_inflight()
     assert backend._inflight == set(), "cancelling clears what it cancelled"
+
+
+async def test_comfy_offers_seeding_only_with_a_seeded_graph(store: ClipStore) -> None:
+    plain = ComfyUIBackend(store)
+    assert plain.capabilities.supports_image_seed is False
+
+    seeded = ComfyUIBackend(store, seed_workflow={"12": {"class_type": "LoadImage",
+                                                        "inputs": {"image": "x.png"}}})
+    assert seeded.capabilities.supports_image_seed is True
+
+
+async def test_comfy_uploads_the_seed_and_points_the_graph_at_it(store: ClipStore) -> None:
+    """Continuity means this clip starts where the last one ended. The seed
+    frame has to reach ComfyUI's input directory and the graph has to name
+    it, or the Loom believes it is building a movement out of unrelated
+    clips."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.endswith("/upload/image"):
+            seen["uploaded"] = True
+            return httpx.Response(200, json={"name": "stored-seed.png"})
+        if url.endswith("/prompt"):
+            seen["graph"] = json.loads(request.content)["prompt"]
+            return httpx.Response(200, json={"prompt_id": "p1"})
+        if "/history/" in url:
+            return httpx.Response(200, json={"p1": {"status": {"status_str": "success"},
+                "outputs": {"8": {"gifs": [{"filename": "o.mp4", "subfolder": "",
+                                            "type": "output"}]}}}})
+        if "/view" in url:
+            return httpx.Response(200, content=b"seeded-clip-bytes")
+        return httpx.Response(200, json={"system": {}})
+
+    seed_graph = {
+        "2": {"class_type": "CLIPTextEncode", "inputs": {"text": ""},
+              "_meta": {"title": "positive"}},
+        "12": {"class_type": "LoadImage", "inputs": {"image": "placeholder.png"}},
+        "13": {"class_type": "LTXVImgToVideo", "inputs": {"length": 1}},
+        "6": {"class_type": "KSampler", "inputs": {"seed": 0}},
+    }
+    backend = ComfyUIBackend(
+        store, client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        poll_interval_s=0.0, seed_workflow=seed_graph,
+    )
+    await backend.generate("a prompt", 4, "ltx-2", seed_image=b"\x89PNG-bytes", zone="main")
+
+    assert seen.get("uploaded") is True
+    graph = seen["graph"]
+    assert graph["12"]["inputs"]["image"] == "stored-seed.png"
+    # 4s at 24fps, 8n+1
+    assert graph["13"]["inputs"]["length"] == 97
+    assert graph["2"]["inputs"]["text"] == "a prompt"
+
+
+async def test_comfy_without_a_seeded_graph_says_so_rather_than_pretending(
+    store: ClipStore,
+) -> None:
+    recorder: dict = {}
+    backend = comfy_backend(store, comfy_transport(recorder))
+    # No seed graph configured: the clip is still rendered, unseeded, and the
+    # operator is told — silently dropping the frame is what used to happen.
+    ref = await backend.generate("p", 4, "ltx-2", seed_image=b"png", zone="main")
+    assert ref is not None
+    assert "12" not in recorder["submitted"]["prompt"]
+
+
+async def test_a_fill_does_not_wait_behind_a_slow_generation(store: ClipStore) -> None:
+    """A fill exists to cover the wait for a slow backend. Queued behind that
+    backend it is useless: measured against local diffusion at 164s a clip,
+    the fills never ran at all and the loop sat on a single clip while the
+    backpressure counter climbed into the hundreds."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class Slow(MockBackend):
+        def estimated_latency(self, tier):
+            from datetime import timedelta
+            return timedelta(seconds=160)      # local diffusion, free but slow
+
+        async def generate(self, prompt, duration_s, tier, **kw):
+            started.set()
+            await release.wait()
+            return await super().generate(prompt, duration_s, tier, **kw)
+
+    slow = Slow(store, name="slow")
+    free = MockBackend(store, name="procedural")
+    sink = Sink()
+    forge = Forge([slow, free], store, on_clip=sink)
+    forge.start()
+    try:
+        await forge.request(zone="main", prompt="p", duration_s=8, tier="mock")
+        await asyncio.wait_for(started.wait(), timeout=5)
+
+        # With the slow backend mid-render, a fill must still get through.
+        await forge.request(zone="main", prompt="f", duration_s=8, tier="mock",
+                            free_only=True)
+        for _ in range(100):
+            if any(c.backend == "procedural" for c in store.all()):
+                break
+            await asyncio.sleep(0.05)
+        assert any(c.backend == "procedural" for c in store.all()), (
+            "the fill never ran while the slow backend held the zone"
+        )
+    finally:
+        release.set()
+        await forge.close()
+
+
+async def test_fills_are_not_counted_in_the_backpressure_signal(store: ClipStore) -> None:
+    # queue_depth gates whether to ask for more imagery. Counting the free
+    # lane would let a slow backend's own gap-filling suppress the next real
+    # generation.
+    forge = Forge([MockBackend(store)], store, on_clip=Sink())
+    await forge.request(zone="main", prompt="f", duration_s=8, tier="mock",
+                        free_only=True)
+    assert forge.queue_depth("main") == 0
+    assert forge.fill_queue_depth("main") == 1
+
+
+async def test_a_fill_skips_a_free_but_slow_rung(store: ClipStore) -> None:
+    """free_only originally filtered on cost alone. Local diffusion is free
+    and takes minutes, so fills were routed straight into the wait they
+    existed to cover — which is why a local party sat on one clip."""
+    from datetime import timedelta
+
+    class SlowFree(MockBackend):
+        def estimated_latency(self, tier):
+            return timedelta(seconds=160)
+
+    slow = SlowFree(store, name="local")
+    fast = MockBackend(store, name="procedural")
+    forge = Forge([slow, fast], store, on_clip=Sink())
+    await forge.request(zone="main", prompt="f", duration_s=8, tier="mock",
+                        free_only=True)
+    await run_forge(forge)
+    assert [c.backend for c in store.all()] == ["procedural"]

@@ -91,6 +91,8 @@ def build_ladder(cfg: EgregoreConfig, store: ClipStore) -> list[VideoBackend]:
                 store,
                 base_url=cfg.generation.comfyui_url,
                 workflow=_comfy_workflow(),
+                seed_workflow=_comfy_workflow("ltxv-2b-seeded.json",
+                                              env="EGREGORE_COMFY_SEED_WORKFLOW"),
             )
         )
     # The procedural renderer ("mock") is a real zero-cost backend, always last.
@@ -112,18 +114,20 @@ _COMFY_WORKFLOW_ENV = "EGREGORE_COMFY_WORKFLOW"
 _DEFAULT_COMFY_WORKFLOW = Path(__file__).resolve().parent.parent / "presets" / "comfyui"
 
 
-def _comfy_workflow() -> dict | None:
+def _comfy_workflow(
+    name: str = "ltxv-2b-gguf.json", env: str = _COMFY_WORKFLOW_ENV
+) -> dict | None:
     """Load the operator's ComfyUI graph, or ``None`` to use the built-in default.
 
     Keys beginning with ``_`` are stripped: they carry human notes, and ComfyUI
     would otherwise reject them as nodes with no ``class_type``.
     """
-    raw = os.environ.get(_COMFY_WORKFLOW_ENV)
-    path = Path(raw) if raw else _DEFAULT_COMFY_WORKFLOW / "ltxv-2b-gguf.json"
+    raw = os.environ.get(env)
+    path = Path(raw) if raw else _DEFAULT_COMFY_WORKFLOW / name
     if not path.is_file():
         if raw:
             log.warning("%s points at %s, which does not exist; using the built-in graph",
-                        _COMFY_WORKFLOW_ENV, path)
+                        env, path)
         return None
     try:
         graph = json.loads(path.read_text())

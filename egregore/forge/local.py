@@ -114,6 +114,7 @@ class ComfyUIBackend:
         health_timeout_s: float = 2.0,
         initial_latency_s: float = 60.0,
         latency_smoothing: float = 0.3,
+        seed_workflow: dict | None = None,
     ) -> None:
         self.name = name
         # Seed for estimated_latency() until real timings arrive; every
@@ -139,6 +140,13 @@ class ComfyUIBackend:
         #: renders running — four orphaned twelve-minute jobs ahead of a live
         #: one is indistinguishable from local video simply never appearing.
         self._inflight: set[str] = set()
+        #: Graph used when a clip is seeded from the previous one's last
+        #: frame. Without one this backend cannot honour a seed, and says so
+        #: in its capabilities rather than accepting the bytes and dropping
+        #: them — which is what it used to do.
+        self.seed_workflow = (
+            copy.deepcopy(seed_workflow) if seed_workflow is not None else None
+        )
 
     # -- protocol ----------------------------------------------------------
 
@@ -147,7 +155,7 @@ class ComfyUIBackend:
         return BackendCapabilities(
             allowed_durations_s=_ALLOWED_DURATIONS,
             supports_native_extend=False,
-            supports_image_seed=True,
+            supports_image_seed=self.seed_workflow is not None,
             tiers=_TIERS,
             max_chain_length=0,
         )
@@ -206,7 +214,18 @@ class ComfyUIBackend:
             )
 
         started = time.monotonic()
-        workflow = self._patched_workflow(prompt, duration_s)
+        seed_name = None
+        if seed_image is not None and self.seed_workflow is not None:
+            seed_name = await self._upload_seed(seed_image)
+        elif seed_image is not None:
+            # Better to say so than to accept the bytes and quietly render an
+            # unrelated clip into what the Loom believes is a continuous
+            # movement.
+            log.warning(
+                "%s: a seed frame was offered but no seeded graph is configured; "
+                "rendering unseeded", self.name,
+            )
+        workflow = self._patched_workflow(prompt, duration_s, seed_name)
         prompt_id = await self._submit(workflow)
         self._inflight.add(prompt_id)
         try:
@@ -274,13 +293,30 @@ class ComfyUIBackend:
 
     # -- internals ---------------------------------------------------------
 
-    def _patched_workflow(self, prompt: str, duration_s: int) -> dict:
+    async def _upload_seed(self, png: bytes) -> str:
+        """Put a still where ComfyUI's LoadImage can find it, return its name."""
+        name = f"egregore-seed-{uuid.uuid4().hex[:12]}.png"
+        response = await self._http().post(
+            f"{self.base_url}/upload/image",
+            files={"image": (name, png, "image/png")},
+            data={"overwrite": "true", "type": "input"},
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"{self.name}: seed upload returned HTTP {response.status_code}"
+            )
+        # ComfyUI may rename on collision; believe what it says it stored.
+        return str(response.json().get("name") or name)
+
+    def _patched_workflow(self, prompt: str, duration_s: int,
+                          seed_name: str | None = None) -> dict:
         """Copy the template and patch in the prompt, length and a seed.
 
         Nodes are found by `class_type` (and `_meta.title` for the positive
         conditioning) so an operator-supplied graph works unchanged.
         """
-        workflow = copy.deepcopy(self.workflow)
+        base = self.workflow if seed_name is None else self.seed_workflow
+        workflow = copy.deepcopy(base)
         # LTX-2 latent length is in frames and wants 8n+1.
         frames = duration_s * FPS + 1
 
@@ -293,8 +329,12 @@ class ComfyUIBackend:
                 if not positive_patched and "negative" not in title:
                     inputs["text"] = prompt
                     positive_patched = True
-            elif class_type in ("EmptyLTXVLatentVideo", "EmptyLatentVideo"):
+            elif class_type in (
+                "EmptyLTXVLatentVideo", "EmptyLatentVideo", "LTXVImgToVideo"
+            ):
                 inputs["length"] = frames
+            elif class_type == "LoadImage" and seed_name is not None:
+                inputs["image"] = seed_name
             elif class_type == "KSampler":
                 inputs["seed"] = uuid.uuid4().int % (1 << 32)
 

@@ -42,6 +42,10 @@ log = logging.getLogger(__name__)
 
 ZERO = Decimal("0")
 
+#: A fill has to arrive while the gap it covers is still open. Anything
+#: slower than this is not a fill, whatever it costs.
+FILL_MAX_LATENCY_S = 20.0
+
 #: Reserve worst-case cost against the ceiling, then generate.
 AuthorizeFn = Callable[[str, Decimal], Awaitable[Reservation | None]]
 #: Reconcile a reservation to the actual cost once a clip lands.
@@ -68,9 +72,11 @@ class GenerationJob:
     seed_image: bytes | None = None
     extend_from: ClipRef | None = None
     movement_id: str | None = None
-    #: Skip metered rungs entirely. Set for a fill: imagery asked for between
-    #: paid generations to keep the loop from thinning out, which should
-    #: never quietly spend the budget the cadence was pacing.
+    #: Set for a fill: imagery asked for to cover the wait for a slow or
+    #: expensive backend. A fill must be free — it should never spend the
+    #: budget the cadence was pacing — and it must also be *fast*, which is
+    #: not the same thing. Local diffusion is free and takes minutes; a fill
+    #: routed there is not a fill, it is the same wait again.
     free_only: bool = False
 
     def __repr__(self) -> str:  # pragma: no cover - trivial
@@ -115,8 +121,14 @@ class Forge:
         self.on_clip = on_clip
         self.stats = ForgeStats()
 
+        # Two lanes per zone. A fill exists to cover the wait for a slow
+        # backend, so putting it behind that backend in one queue defeats it
+        # entirely: measured against local diffusion at 164s per clip, the
+        # fills never ran at all and the loop sat on a single clip.
         self._queues: dict[str, asyncio.Queue[GenerationJob]] = {}
+        self._fill_queues: dict[str, asyncio.Queue[GenerationJob]] = {}
         self._workers: dict[str, asyncio.Task[None]] = {}
+        self._fill_workers: dict[str, asyncio.Task[None]] = {}
         self._inflight: dict[str, int] = {}
         self._running = False
 
@@ -125,14 +137,14 @@ class Forge:
     def start(self) -> None:
         """Spin up a worker per known zone. Idempotent."""
         self._running = True
-        for zone in list(self._queues):
+        for zone in list(self._queues) + list(self._fill_queues):
             self._ensure_worker(zone)
 
     async def close(self) -> None:
         """Cancel workers and wait for them. In-flight generations are
         cancelled; the clip store is left alone (see `ClipStore.wipe`)."""
         self._running = False
-        workers = list(self._workers.values())
+        workers = list(self._workers.values()) + list(self._fill_workers.values())
         for task in workers:
             task.cancel()
         for task in workers:
@@ -141,6 +153,7 @@ class Forge:
             except asyncio.CancelledError:
                 pass
         self._workers.clear()
+        self._fill_workers.clear()
         self._inflight.clear()
 
     # -- public API --------------------------------------------------------
@@ -175,17 +188,26 @@ class Forge:
             movement_id=movement_id,
             free_only=free_only,
         )
-        queue = self._queue_for(zone)
+        queue = self._fill_queue_for(zone) if free_only else self._queue_for(zone)
         queue.put_nowait(job)
         self.stats.requested += 1
         if self._running:
             self._ensure_worker(zone)
 
     def queue_depth(self, zone: str) -> int:
-        """Pending + in-flight jobs for one zone (PRD V-6, `/api/status`)."""
+        """Pending + in-flight paid jobs for one zone (PRD V-6).
+
+        Fills are deliberately excluded: this number gates whether to ask for
+        more imagery, and counting the free lane would let a slow backend's
+        own gap-filling suppress the next real generation.
+        """
         queue = self._queues.get(zone)
         pending = queue.qsize() if queue is not None else 0
         return pending + self._inflight.get(zone, 0)
+
+    def fill_queue_depth(self, zone: str) -> int:
+        queue = self._fill_queues.get(zone)
+        return queue.qsize() if queue is not None else 0
 
     def total_queue_depth(self) -> int:
         return sum(self.queue_depth(zone) for zone in self._queues)
@@ -195,11 +217,14 @@ class Forge:
 
         Test and shutdown affordance; the party loop never needs it.
         """
-        zones = [zone] if zone is not None else list(self._queues)
+        zones = [zone] if zone is not None else list(
+            set(self._queues) | set(self._fill_queues)
+        )
         for name in zones:
-            queue = self._queues.get(name)
-            if queue is not None:
-                await queue.join()
+            for pool in (self._queues, self._fill_queues):
+                queue = pool.get(name)
+                if queue is not None:
+                    await queue.join()
 
     # -- workers -----------------------------------------------------------
 
@@ -211,18 +236,31 @@ class Forge:
             self._inflight.setdefault(zone, 0)
         return queue
 
+    def _fill_queue_for(self, zone: str) -> asyncio.Queue[GenerationJob]:
+        queue = self._fill_queues.get(zone)
+        if queue is None:
+            queue = asyncio.Queue()
+            self._fill_queues[zone] = queue
+        return queue
+
     def _ensure_worker(self, zone: str) -> None:
         task = self._workers.get(zone)
         if task is None or task.done():
             self._workers[zone] = asyncio.create_task(
                 self._worker(zone), name=f"forge-{zone}"
             )
+        fill = self._fill_workers.get(zone)
+        if fill is None or fill.done():
+            self._fill_workers[zone] = asyncio.create_task(
+                self._worker(zone, fill=True), name=f"forge-fill-{zone}"
+            )
 
-    async def _worker(self, zone: str) -> None:
-        queue = self._queue_for(zone)
+    async def _worker(self, zone: str, *, fill: bool = False) -> None:
+        queue = self._fill_queue_for(zone) if fill else self._queue_for(zone)
         while True:
             job = await queue.get()
-            self._inflight[zone] = self._inflight.get(zone, 0) + 1
+            if not fill:
+                self._inflight[zone] = self._inflight.get(zone, 0) + 1
             try:
                 await self._dispatch(job)
             except asyncio.CancelledError:
@@ -233,7 +271,8 @@ class Forge:
                 self.stats.failures += 1
                 log.exception("forge worker error zone=%s", zone)
             finally:
-                self._inflight[zone] -= 1
+                if not fill:
+                    self._inflight[zone] -= 1
                 queue.task_done()
 
     # -- the ladder --------------------------------------------------------
@@ -247,11 +286,19 @@ class Forge:
             duration_s = self._pick_duration(backend, job.duration_s)
             cost = backend.max_plausible_cost(duration_s, tier)
 
-            if job.free_only and cost > ZERO:
-                # A fill exists to keep the loop populated between paid
-                # generations. Letting it reach a metered rung would spend
-                # the budget the cadence was deliberately spacing out.
-                continue
+            if job.free_only:
+                if cost > ZERO:
+                    # Would spend the budget the cadence was spacing out.
+                    continue
+                try:
+                    latency = backend.estimated_latency(tier).total_seconds()
+                except Exception:
+                    latency = 0.0
+                if latency > FILL_MAX_LATENCY_S:
+                    # Free but slow — local diffusion is both, and a fill sent
+                    # there reproduces the wait it existed to cover. Measured:
+                    # fills routed into a 164s render never ran at all.
+                    continue
 
             authorized, reservation = await self._reserve(backend, cost, job.zone)
             if not authorized:
