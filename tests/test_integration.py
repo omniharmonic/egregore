@@ -94,14 +94,19 @@ class Party:
             RingBuffer.from_config("party", cfg.privacy)
             if cfg.continuity.topology == "commons" else None
         )
+        mirror_zone = (
+            cfg.zones[0].id
+            if cfg.continuity.topology == "mirror" and cfg.zones else None
+        )
         for z in cfg.zones:
             self.pipelines[z.id] = ZonePipeline(
                 z, cfg, forge=self.forge, governor=self.governor,
                 state=self.state, bus=self.bus, live=self.live,
                 ring=self.shared_ring,
+                generates=(mirror_zone is None or z.id == mirror_zone),
             )
-        if cfg.continuity.topology == "mirror" and cfg.zones:
-            self.state.mirror_zone = cfg.zones[0].id
+        if mirror_zone is not None:
+            self.state.mirror_zone = mirror_zone
         self.state.control_handler = make_control_handler(
             self.bus, self.pipelines, self.state
         )
@@ -391,11 +396,19 @@ async def test_mirror_serves_one_zones_manifest_to_every_zone(tmp_path):
     cfg = _two_zone_cfg(tmp_path, "mirror")
     async with Party(cfg) as party:
         assert party.state.mirror_zone == "kitchen"
-        await party.wait_clips(1)
+        # Only the mirror zone commissions video — that is what makes this
+        # one generation stream for the whole venue rather than one per room.
+        assert party.pipelines["kitchen"].generates is True
+        assert party.pipelines["garden"].generates is False
+
+        await party.wait_clips(1, zone="kitchen")
         kitchen = party.state.get_manifest("kitchen")
         garden = party.state.get_manifest("garden")
         assert kitchen is not None and garden is not None
         assert [e.clip_id for e in kitchen.entries] == [e.clip_id for e in garden.entries]
+        assert all(c.zone == "kitchen" for c in party.store.all()), (
+            "a follower zone must not commission clips of its own"
+        )
 
 
 async def test_default_topology_is_independent(tmp_path):

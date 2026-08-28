@@ -276,7 +276,8 @@ class ZonePipeline:
                  governor: Governor, state: ConductorState,
                  bus: PartyBus | None = None,
                  live: LiveSettings | None = None,
-                 ring: RingBuffer | None = None) -> None:
+                 ring: RingBuffer | None = None,
+                 generates: bool = True) -> None:
         self.bus = bus or PartyBus()
         self.cfg = cfg
         # Read per cycle, so a settings change lands on the next clip.
@@ -289,6 +290,11 @@ class ZonePipeline:
         self.muted = False
         #: Set when this zone's audio comes from enrolled browsers.
         self.network_source = None
+        #: False for a follower zone under the "mirror" topology. It still
+        #: listens and contributes transcripts; it just does not commission
+        #: video of its own, which is what makes mirror one stream for a
+        #: whole venue rather than one per room.
+        self.generates = generates
 
         # Under the "commons" topology every zone is handed the same buffer,
         # so the whole party is one conversation. The pipeline neither knows
@@ -388,6 +394,9 @@ class ZonePipeline:
 
     async def _generation_loop(self) -> None:
         cfg = self.cfg
+        if not self.generates:
+            log.info("zone %s: mirroring another zone; not generating", self.zone)
+            return
         while True:
             await asyncio.sleep(1.0)
             try:
@@ -574,6 +583,13 @@ async def run_party(cfg: EgregoreConfig) -> None:
         throughput_floor_s=_throughput_floor(cfg, ladder, live),
     )
 
+    # Under "mirror" exactly one zone commissions video and every screen
+    # plays it; the others still listen. None for the other topologies.
+    mirror_zone = (
+        cfg.zones[0].id
+        if cfg.continuity.topology == "mirror" and cfg.zones else None
+    )
+
     # One buffer for the whole party under "commons"; None means each zone
     # keeps its own, which is the independent and mirror cases.
     shared_ring = (
@@ -670,7 +686,8 @@ async def run_party(cfg: EgregoreConfig) -> None:
     for z in cfg.zones:
         pipelines[z.id] = ZonePipeline(
             z, cfg, forge=forge, governor=governor, state=state, bus=bus,
-            live=live, ring=shared_ring
+            live=live, ring=shared_ring,
+            generates=(mirror_zone is None or z.id == mirror_zone)
         )
 
     import uvicorn
@@ -679,9 +696,9 @@ async def run_party(cfg: EgregoreConfig) -> None:
         uvicorn.Config(app, host=cfg.serving.host, port=cfg.serving.port, log_level="warning")
     )
 
-    if cfg.continuity.topology == "mirror" and cfg.zones:
-        state.mirror_zone = cfg.zones[0].id
-        log.info("topology mirror: every screen follows zone %s", state.mirror_zone)
+    if mirror_zone is not None:
+        state.mirror_zone = mirror_zone
+        log.info("topology mirror: every screen follows zone %s", mirror_zone)
     if shared_ring is not None:
         await shared_ring.start()
         log.info("topology commons: all zones share one transcript pool")
