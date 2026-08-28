@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from egregore.conductor import ConductorState, create_app
 from egregore.types import FeatureFrame, Manifest, ManifestEntry, MoodState
@@ -574,3 +575,113 @@ def test_writing_a_key_is_refused_from_off_the_machine(cfg_home):
         assert r.status_code == 403
         assert client.get("/api/secrets").json()["writable"] is False
         assert client.get("/api/secrets").json()["present"]["FAL_KEY"] is False
+
+
+# ---------------------------------------------------------------------------
+# Nodes — enrolling a phone, and cutting one off
+# ---------------------------------------------------------------------------
+
+
+def test_enrolling_a_node_and_listing_it(cfg_home):
+    app = create_app(_cfg_state(), lens_dir=_LENS, password=None)
+    with TestClient(app) as client:
+        r = client.post("/api/nodes", json={
+            "id": "n1", "label": "Ben's phone", "zone": "main", "role": "transmit"})
+        assert r.status_code == 200
+        assert r.json()["node"]["zone"] == "main"
+        listed = client.get("/api/nodes").json()["nodes"]
+    assert [n["id"] for n in listed] == ["n1"]
+
+
+def test_enrolling_is_open_but_managing_nodes_needs_the_operator(cfg_home):
+    # Walking up with a phone must not need a password; cutting someone off
+    # is an operator action.
+    app = create_app(_cfg_state(), lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        assert client.post("/api/nodes", json={
+            "id": "n1", "label": "p", "zone": "main", "role": "both"}).status_code == 200
+        assert client.get("/api/nodes").status_code == 401
+        assert client.post("/api/nodes/n1/mute", json={"on": True}).status_code == 401
+        client.post("/api/join", json={"password": "pw"})
+        assert client.get("/api/nodes").status_code == 200
+        assert client.post("/api/nodes/n1/mute", json={"on": True}).status_code == 200
+        assert client.delete("/api/nodes/n1").status_code == 200
+
+
+def test_enroll_rejects_a_bad_role(cfg_home):
+    app = create_app(_cfg_state(), lens_dir=_LENS, password=None)
+    with TestClient(app) as client:
+        assert client.post("/api/nodes", json={
+            "id": "n1", "label": "p", "zone": "main", "role": "root"}).status_code == 400
+
+
+def test_ingest_feeds_the_zone_and_respects_a_mute(cfg_home):
+    seen: list[tuple[str, str, int]] = []
+    state = _cfg_state()
+
+    async def ingest(zone, node_id, pcm, rate):
+        seen.append((zone, node_id, len(pcm)))
+
+    state.ingest_handler = ingest
+    app = create_app(state, lens_dir=_LENS, password=None)
+    with TestClient(app) as client:
+        client.post("/api/nodes", json={
+            "id": "n1", "label": "p", "zone": "main", "role": "transmit"})
+        with client.websocket_connect("/ws/ingest?zone=main&node=n1") as ws:
+            ws.send_bytes(b"\x00\x01" * 100)
+            ws.send_bytes(b"\x00\x02" * 100)
+        assert len(seen) == 2
+
+        # Muting must drop the audio at the server, not merely hide the node.
+        client.post("/api/nodes/n1/mute", json={"on": True})
+        with client.websocket_connect("/ws/ingest?zone=main&node=n1") as ws:
+            ws.send_bytes(b"\x00\x03" * 100)
+        assert len(seen) == 2, "a muted node's audio must not reach the zone"
+
+
+def test_ingest_from_an_unenrolled_node_is_ignored(cfg_home):
+    seen: list = []
+    state = _cfg_state()
+
+    async def ingest(zone, node_id, pcm, rate):
+        seen.append(node_id)
+
+    state.ingest_handler = ingest
+    app = create_app(state, lens_dir=_LENS, password=None)
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/ingest?zone=main&node=ghost") as ws:
+            ws.send_bytes(b"\x00\x01" * 100)
+    assert seen == [], "audio from a node we never enrolled must be dropped"
+
+
+def test_ingest_from_a_receive_only_node_is_ignored(cfg_home):
+    seen: list = []
+    state = _cfg_state()
+
+    async def ingest(zone, node_id, pcm, rate):
+        seen.append(node_id)
+
+    state.ingest_handler = ingest
+    app = create_app(state, lens_dir=_LENS, password=None)
+    with TestClient(app) as client:
+        client.post("/api/nodes", json={
+            "id": "screen", "label": "tv", "zone": "main", "role": "receive"})
+        with client.websocket_connect("/ws/ingest?zone=main&node=screen") as ws:
+            ws.send_bytes(b"\x00\x01" * 100)
+    assert seen == [], "a screen is not a microphone"
+
+
+def test_ingest_requires_the_password_when_one_is_set(cfg_home):
+    state = _cfg_state()
+
+    async def ingest(zone, node_id, pcm, rate):
+        raise AssertionError("must not be reached")
+
+    state.ingest_handler = ingest
+    app = create_app(state, lens_dir=_LENS, password="pw")
+    with TestClient(app) as client, pytest.raises(WebSocketDisconnect) as exc:
+        with client.websocket_connect("/ws/ingest?zone=main&node=n1") as ws:
+            ws.send_bytes(b"\x00\x01" * 10)
+            ws.receive_text()
+    # Same refusal code the feature bus uses for an unauthenticated socket.
+    assert exc.value.code == 4401

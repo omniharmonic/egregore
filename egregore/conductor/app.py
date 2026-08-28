@@ -404,6 +404,73 @@ def create_app(
         # The response says only that it is now set — never what was stored.
         return {"saved": name, "present": present, "restart_required": True}
 
+    # -- nodes --------------------------------------------------------------
+    #
+    # Enrolling is open on purpose: a guest holding a phone should not have to
+    # be told a password first, and that moment is the whole product. Anything
+    # that *manages* a node is an operator action behind the party password.
+
+    @app.post("/api/nodes")
+    async def enroll_node(entry: dict) -> dict:
+        try:
+            node = state.nodes.enroll(
+                str(entry.get("id", "")),
+                label=str(entry.get("label", "") or "device"),
+                zone=str(entry.get("zone", "") or "main"),
+                role=str(entry.get("role", "") or "receive"),
+            )
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        return {"node": node.as_wire(), "zones": sorted(state.zone_config)}
+
+    @app.get("/api/nodes", dependencies=[Depends(require_party)])
+    async def list_nodes() -> dict:
+        state.nodes.expire()
+        return {"nodes": [n.as_wire() for n in state.nodes.all()]}
+
+    @app.post("/api/nodes/{node_id}/mute", dependencies=[Depends(require_party)])
+    async def mute_node(node_id: str, payload: dict | None = None) -> dict:
+        node = state.nodes.mute(node_id, bool((payload or {}).get("on", True)))
+        if node is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown node {node_id!r}")
+        return {"node": node.as_wire()}
+
+    @app.delete("/api/nodes/{node_id}", dependencies=[Depends(require_party)])
+    async def kick_node(node_id: str) -> dict:
+        if not state.nodes.kick(node_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown node {node_id!r}")
+        return {"kicked": node_id}
+
+    @app.websocket("/ws/ingest")
+    async def ws_ingest(websocket: WebSocket) -> None:
+        """Audio from a transmitting browser: binary 16-bit mono PCM frames.
+
+        The socket stays open even when the node is muted or unknown — the
+        audio is dropped here rather than the connection being torn down, so
+        muting is instant and reversible and the phone never has to notice.
+
+        Each frame is handled as it arrives rather than queued, so a node
+        sending faster than the server can transcribe backs up its own socket
+        instead of growing an unbounded buffer here.
+        """
+        zone = websocket.query_params.get("zone", "main")
+        node_id = websocket.query_params.get("node", "")
+        if not ws_authorized(password, websocket.cookies.get(COOKIE_NAME)):
+            await websocket.close(code=_WS_UNAUTHORIZED)
+            return
+        await websocket.accept()
+        try:
+            while True:
+                data = await websocket.receive_bytes()
+                node = state.nodes.get(node_id)
+                if node is None or not node.transmits:
+                    continue
+                state.nodes.heartbeat(node_id)
+                if state.ingest_handler is not None:
+                    await state.ingest_handler(zone, node_id, data, 16000)
+        except Exception:
+            return
+
     @app.get("/api/audio-devices", dependencies=[Depends(require_operator)])
     async def get_audio_devices() -> dict:
         """Input devices this machine can hear, for the microphone picker."""

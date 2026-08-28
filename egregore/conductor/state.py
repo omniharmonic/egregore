@@ -31,6 +31,7 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
+from egregore.conductor.nodes import NodeRegistry
 from egregore.types import FeatureFrame, Manifest, MoodState
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,13 @@ class ConductorState:
         #: Bumped whenever a zone's client config changes, so a screen
         #: can tell a genuine change from a reconnect.
         self._config_revision: dict[str, int] = {}
+        #: Devices that enrolled over the network (spec: multi-node party).
+        self.nodes = NodeRegistry()
+        #: Bound by the integration layer: (zone, node_id, pcm, sample_rate).
+        #: ``None`` means this deployment accepts no network audio.
+        self.ingest_handler: (
+            Callable[[str, str, bytes, int], Awaitable[None]] | None
+        ) = None
 
         self._manifests: dict[str, Manifest] = {}
         self._latest_frame: dict[str, FeatureFrame] = {}
