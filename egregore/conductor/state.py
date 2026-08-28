@@ -285,6 +285,7 @@ class ConductorState:
             "zone": zone,
             "screen": screen,
             "lens_stack": inherit("lens_stack", []),
+            "lens_params": inherit("lens_params", {}),
             "loop_phase_offset": inherit("loop_phase_offset", 0.0),
             # Screen overrides zone, zone overrides the default — the same
             # precedence lens_stack uses. Reading this from the screen alone

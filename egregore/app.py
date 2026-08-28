@@ -600,10 +600,12 @@ def _zone_config_map(cfg: EgregoreConfig) -> dict[str, dict]:
     for z in cfg.zones:
         out[z.id] = {
             "lens_stack": z.lens_stack,
+            "lens_params": {},
             "crossfade_s": 2.0,
             "screens": {
                 sid: {
                     "lens_stack": screens[sid].lens_stack if sid in screens else None,
+                    "lens_params": None,
                     "loop_phase_offset": screens[sid].loop_phase_offset if sid in screens else 0.0,
                     "audio_source": screens[sid].audio_source if sid in screens else "zone",
                 }

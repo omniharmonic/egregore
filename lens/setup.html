@@ -865,6 +865,7 @@
         cb.addEventListener('change', function () {
           lab.className = cb.checked ? 'on' : '';
           showOrder();
+          renderKnobs();
           fetch('/api/zones/' + encodeURIComponent(zone), {
             method: 'POST', credentials: 'same-origin',
             headers: { 'content-type': 'application/json' },
@@ -881,6 +882,77 @@
       });
       box.appendChild(pick);
       showOrder();
+
+      // --- per-lens knobs, applied live -------------------------------
+      var knobs = document.createElement('div');
+      knobs.style.margin = '4px 0 10px';
+      box.appendChild(knobs);
+
+      function paramsNow() {
+        var out = {};
+        Array.prototype.slice.call(knobs.querySelectorAll('input[type=range]'))
+          .forEach(function (r) {
+            (out[r.dataset.lens] = out[r.dataset.lens] || [])[+r.dataset.slot] =
+              parseFloat(r.value);
+          });
+        // Slots the shader defines but this lens does not expose stay at 0.
+        Object.keys(out).forEach(function (k) {
+          for (var i = 0; i < out[k].length; i++) {
+            if (out[k][i] === undefined) out[k][i] = 0;
+          }
+        });
+        return out;
+      }
+
+      function pushParams() {
+        fetch('/api/zones/' + encodeURIComponent(zone), {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ lens_params: paramsNow() })
+        });
+      }
+
+      function renderKnobs() {
+        knobs.textContent = '';
+        currentStack().forEach(function (lens) {
+          var spec = (state.zones.lens_params || {})[lens];
+          if (!spec || !spec.length) return;
+          var head = document.createElement('div');
+          head.className = 'row';
+          var h = document.createElement('span');
+          h.className = 'off'; h.style.minWidth = '15ch'; h.textContent = lens;
+          head.appendChild(h);
+          knobs.appendChild(head);
+
+          spec.forEach(function (slot, i) {
+            if (!slot || !slot.length) return;      // shader slot with no knob
+            var row = document.createElement('div');
+            row.className = 'row';
+            var lab = document.createElement('label');
+            lab.className = 'key'; lab.style.minWidth = '13ch';
+            lab.textContent = '  ' + slot[0];
+            var r = document.createElement('input');
+            r.type = 'range'; r.min = slot[1]; r.max = slot[2];
+            r.step = (slot[2] - slot[1]) / 100;
+            r.dataset.lens = lens; r.dataset.slot = i;
+            r.style.minWidth = '200px';
+            var have = (z.lens_params || {})[lens];
+            r.value = have && have[i] !== undefined
+              ? have[i]
+              : (slot[1] + slot[2]) / 2;
+            var num = document.createElement('span');
+            num.className = 'val'; num.style.minWidth = '6ch';
+            num.textContent = (+r.value).toFixed(2);
+            r.addEventListener('input', function () {
+              num.textContent = (+r.value).toFixed(2);
+            });
+            r.addEventListener('change', pushParams);
+            row.appendChild(lab); row.appendChild(r); row.appendChild(num);
+            knobs.appendChild(row);
+          });
+        });
+      }
+      renderKnobs();
 
       // --- audio routing, applied live ---
       var arow = document.createElement('div');

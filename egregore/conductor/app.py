@@ -57,8 +57,26 @@ _WS_UNAUTHORIZED = 4401
 #: settings page reads this rather than carrying its own copy.
 KNOWN_LENSES = (
     "feedback", "kaleidoscope", "flow", "chroma", "bloom", "liquid",
-    "glitch", "pixelsort", "crt", "corrupt",
+    "glitch", "pixelsort", "crt", "corrupt", "smoke",
 )
+
+#: What each lens's four tunable parameters mean, for the operator's controls.
+#: Values are [label, min, max] per slot; a lens with fewer knobs lists fewer.
+LENS_PARAMS: dict[str, list] = {
+    "smoke": [["drift", 0.0, 0.25], ["dispersion", 0.0, 1.0],
+              ["persistence", 0.0, 0.95], ["detail", 0.5, 8.0]],
+    "flow": [["warp", 0.0, 0.2], ["swirl", 0.0, 1.0], [], ["scale", 0.5, 8.0]],
+    "feedback": [["decay", 0.6, 0.995], ["zoom", -0.05, 0.05]],
+    "liquid": [["viscosity", 0.0, 1.0], ["refraction", 0.0, 1.0], [],
+               ["scale", 0.5, 6.0]],
+    "bloom": [["threshold", 0.0, 1.0], ["strength", 0.0, 1.0]],
+    "chroma": [["separation", 0.0, 1.0]],
+    "glitch": [["density", 0.0, 1.0], ["block", 0.0, 1.0]],
+    "kaleidoscope": [["segments", 2.0, 16.0]],
+    "pixelsort": [["threshold", 0.0, 1.0], ["length", 0.0, 1.0]],
+    "crt": [["curvature", 0.0, 1.0], ["scanlines", 0.0, 1.0]],
+    "corrupt": [["amount", 0.0, 1.0], ["drift", 0.0, 1.0]],
+}
 
 _LOOPBACK = ("127.0.0.1", "::1", "localhost")
 
@@ -524,6 +542,7 @@ def create_app(
             source = zones.get(zone, {})
             out[zone] = {
                 "lens_stack": client.get("lens_stack", []),
+                "lens_params": client.get("lens_params", {}),
                 "audio_source": client.get("audio_source", "zone"),
                 "crossfade_s": client.get("crossfade_s", 2.0),
                 "config_revision": state.config_revision(zone),
@@ -532,7 +551,11 @@ def create_app(
                 "input_device": (state.input_devices or {}).get(zone),
                 "screens_connected": state.screens_connected_for(zone),
             }
-        return {"zones": out, "known_lenses": list(KNOWN_LENSES)}
+        return {
+            "zones": out,
+            "known_lenses": list(KNOWN_LENSES),
+            "lens_params": LENS_PARAMS,
+        }
 
     @app.post("/api/zones/{zone}", dependencies=[Depends(require_operator)])
     async def post_zone(zone: str, patch: dict) -> dict:
@@ -552,6 +575,26 @@ def create_app(
                     f"unknown lens {unknown!r}; known: {sorted(KNOWN_LENSES)}",
                 )
             allowed["lens_stack"] = stack
+        if "lens_params" in patch:
+            raw = patch.get("lens_params") or {}
+            if not isinstance(raw, dict):
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST, "lens_params must be an object"
+                )
+            cleaned: dict[str, list[float]] = {}
+            for lens, values in raw.items():
+                if lens not in KNOWN_LENSES:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST, f"unknown lens {lens!r}"
+                    )
+                try:
+                    cleaned[lens] = [float(v) for v in list(values)[:4]]
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST,
+                        f"{lens} parameters must be numbers",
+                    ) from exc
+            allowed["lens_params"] = cleaned
         if "audio_source" in patch:
             source = str(patch["audio_source"])
             if source not in ("zone", "local_mic"):

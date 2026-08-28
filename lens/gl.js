@@ -1,9 +1,26 @@
 // gl.js — WebGL2 pipeline: fullscreen triangle, ping-pong FBO lens stack,
 // persistent feedback texture. No dependencies, no throwing on failure.
 
-export const AUDIO_UNIFORMS = [
+// Sensible starting values per lens, so a shader that reads u_p0..u_p3
+// looks right before anyone touches a control.
+export const LENS_PARAM_DEFAULTS = {
+  smoke:        [0.06, 0.35, 0.55, 3.2],
+  flow:         [0.05, 0.30, 0.00, 2.6],
+  feedback:     [0.94, 0.02, 0.00, 0.0],
+  liquid:       [0.55, 0.40, 0.00, 2.0],
+  bloom:        [0.55, 0.35, 0.00, 0.0],
+  chroma:       [0.35, 0.00, 0.00, 0.0],
+  glitch:       [0.35, 0.30, 0.00, 0.0],
+  kaleidoscope: [6.00, 0.00, 0.00, 0.0],
+  pixelsort:    [0.50, 0.35, 0.00, 0.0],
+  crt:          [0.35, 0.45, 0.00, 0.0],
+  corrupt:      [0.35, 0.30, 0.00, 0.0],
+};
+
+const AUDIO_UNIFORMS = [
   'u_rms', 'u_low', 'u_mid', 'u_high', 'u_centroid',
   'u_onset', 'u_energy', 'u_valence', 'u_intensity',
+  'u_p0', 'u_p1', 'u_p2', 'u_p3',
 ];
 
 const UNIFORMS = [
@@ -160,6 +177,13 @@ export class Renderer {
     if (L.u_sizeA) gl.uniform2f(L.u_sizeA, s.sizeA[0], s.sizeA[1]);
     if (L.u_sizeB) gl.uniform2f(L.u_sizeB, s.sizeB[0], s.sizeB[1]);
     for (const u of AUDIO_UNIFORMS) if (L[u]) gl.uniform1f(L[u], s.audio[u.slice(2)] || 0);
+    // Per-lens tuning. Defaults live in the shader's own fallbacks; anything
+    // the operator has set for this lens arrives here as p0..p3.
+    const P = (s.params && s.params[name]) || null;
+    for (let i = 0; i < 4; i++) {
+      const loc = L['u_p' + i];
+      if (loc) gl.uniform1f(loc, P && P[i] !== undefined ? P[i] : LENS_PARAM_DEFAULTS[name]?.[i] ?? 0.5);
+    }
 
     gl.bindVertexArray(this.vao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);

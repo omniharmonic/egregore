@@ -16,7 +16,7 @@ import { Playlist, Deck, ClipCache, safeJson } from './media.js';
 // arrives or fails to compile is dropped later, in loadShaders().
 const KNOWN_LENSES = [
   'feedback', 'kaleidoscope', 'flow', 'chroma', 'bloom', 'liquid',
-  'glitch', 'pixelsort', 'crt', 'corrupt',
+  'glitch', 'pixelsort', 'crt', 'corrupt', 'smoke',
 ];
 const DEFAULT_STACK = ['flow', 'feedback', 'bloom'];
 const DEFAULT_CROSSFADE = 2;
@@ -48,7 +48,7 @@ const state = {
   overBudgetSince: 0, underBudgetSince: 0,
   manifestWs: null, manifestRetry: 0, manifestState: 'init',
   authPending: false, started: false,
-  configRevision: 0, stackPinned: false,
+  configRevision: 0, stackPinned: false, params: {},
 };
 
 const cache = new ClipCache(CACHE_BYTES);
@@ -203,6 +203,9 @@ async function loadConfig() {
     (SCREEN ? `&screen=${encodeURIComponent(SCREEN)}` : '');
   const c = await safeJson(url, showJoin);
   let stack = DEFAULT_STACK.slice();
+  if (c && c.lens_params && typeof c.lens_params === 'object') {
+    state.params = c.lens_params;
+  }
   if (c && Array.isArray(c.lens_stack)) {
     const s = c.lens_stack.filter((n) => KNOWN_LENSES.includes(n));
     if (s.length) stack = s;
@@ -228,10 +231,13 @@ async function loadConfig() {
     features = new Features({ zone: ZONE, local: true, phase: state.phase });
     features.start();
   }
-  if (!state.stackPinned || state.stack.length === 0) {
-    state.stack = stack;
-    state.activePasses = stack.length;
-  }
+  // `stack` already resolves to the URL override when one is present, and
+  // the URL does not change under us — so assigning unconditionally is what
+  // keeps a pinned screen pinned. The earlier guard skipped the assignment
+  // whenever a stack was already set, which meant ?stack= never applied at
+  // all: the default stack was always "already set" by then.
+  state.stack = stack;
+  state.activePasses = stack.length;
 }
 
 // Re-read /api/config and adopt any change to the stack, crossfade or audio
@@ -428,6 +434,7 @@ function drawGL(time, audio) {
     sizeA: deck ? deck.size(0) : [0, 0],
     sizeB: deck ? deck.size(1) : [0, 0],
     audio: audio || {},
+    params: state.params,
   };
   state.passes = renderer.render(state.stack.slice(0, state.activePasses), s);
 }
