@@ -482,6 +482,33 @@ def create_app(
         except Exception:
             return
 
+    @app.get("/api/monitor", dependencies=[Depends(require_operator)])
+    async def get_monitor(request: Request) -> dict:
+        """Live transcripts and prompts, for an operator watching their own room.
+
+        This is the only route in the system that can return transcript text,
+        and it exists because an operator cannot trust a pipeline they cannot
+        see. It is therefore doubly gated: the integration layer only binds a
+        provider when ``EGREGORE_MONITOR=1``, and the request must come from
+        the machine running the party even when a password would otherwise be
+        enough. Nothing here is stored; it reads the ring buffer that is being
+        continuously evicted anyway.
+        """
+        if state.monitor_provider is None:
+            return {
+                "enabled": False,
+                "why": "set EGREGORE_MONITOR=1 before starting the party to watch "
+                       "transcripts; it is off by default because transcript text "
+                       "otherwise never leaves the ring buffer",
+                "zones": {},
+            }
+        if not _is_local(request):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "transcripts can only be watched from the machine running the party",
+            )
+        return {"enabled": True, "why": "", **state.monitor_provider()}
+
     @app.get("/api/audio-devices", dependencies=[Depends(require_operator)])
     async def get_audio_devices() -> dict:
         """Input devices this machine can hear, for the microphone picker."""

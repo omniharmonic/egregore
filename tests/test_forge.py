@@ -1396,3 +1396,44 @@ async def test_fal_generates_on_the_configured_model_when_asked_for_another(
     submit = [u for m, u in recorder["requests"] if m == "POST"][0]
     assert submit.endswith("minimax/h3-max/text-to-video"), submit
     await backend.close()
+
+
+async def test_a_fill_never_reaches_a_metered_rung(store: ClipStore) -> None:
+    # A fill exists to keep the loop populated between paid generations. If it
+    # could reach a priced backend it would spend exactly the budget the
+    # cadence was spacing out.
+    class Priced(MockBackend):
+        def max_plausible_cost(self, duration_s: int, tier: str) -> Decimal:
+            return Decimal("1.00")
+
+    priced = Priced(store, name="cloudish")
+    free = MockBackend(store, name="procedural")
+    ledger = Ledger(approve=True)
+    sink = Sink()
+    forge = Forge([priced, free], store, authorize=ledger.authorize,
+                  settle=ledger.settle, release=ledger.release, on_clip=sink)
+
+    await forge.request(zone="main", prompt="p", duration_s=8, tier="mock",
+                        free_only=True)
+    await run_forge(forge)
+
+    assert ledger.authorized == [], "a fill must not reserve against the budget"
+    assert [c.backend for c in store.all()] == ["procedural"]
+
+
+async def test_a_normal_request_still_prefers_the_paid_rung(store: ClipStore) -> None:
+    class Priced(MockBackend):
+        def max_plausible_cost(self, duration_s: int, tier: str) -> Decimal:
+            return Decimal("1.00")
+
+    priced = Priced(store, name="cloudish")
+    free = MockBackend(store, name="procedural")
+    ledger = Ledger(approve=True)
+    sink = Sink()
+    forge = Forge([priced, free], store, authorize=ledger.authorize,
+                  settle=ledger.settle, release=ledger.release, on_clip=sink)
+
+    await forge.request(zone="main", prompt="p", duration_s=8, tier="mock")
+    await run_forge(forge)
+
+    assert [c.backend for c in store.all()] == ["cloudish"]

@@ -40,6 +40,8 @@ from .store import ClipStore
 
 log = logging.getLogger(__name__)
 
+ZERO = Decimal("0")
+
 #: Reserve worst-case cost against the ceiling, then generate.
 AuthorizeFn = Callable[[str, Decimal], Awaitable[Reservation | None]]
 #: Reconcile a reservation to the actual cost once a clip lands.
@@ -66,6 +68,10 @@ class GenerationJob:
     seed_image: bytes | None = None
     extend_from: ClipRef | None = None
     movement_id: str | None = None
+    #: Skip metered rungs entirely. Set for a fill: imagery asked for between
+    #: paid generations to keep the loop from thinning out, which should
+    #: never quietly spend the budget the cadence was pacing.
+    free_only: bool = False
 
     def __repr__(self) -> str:  # pragma: no cover - trivial
         return (
@@ -150,6 +156,7 @@ class Forge:
         seed_image: bytes | None = None,
         extend_from: ClipRef | None = None,
         movement_id: str | None = None,
+        free_only: bool = False,
     ) -> None:
         """Enqueue a generation. Returns as soon as the job is queued.
 
@@ -166,6 +173,7 @@ class Forge:
             seed_image=seed_image,
             extend_from=extend_from,
             movement_id=movement_id,
+            free_only=free_only,
         )
         queue = self._queue_for(zone)
         queue.put_nowait(job)
@@ -238,6 +246,12 @@ class Forge:
             tier = self._pick_tier(backend, job.tier)
             duration_s = self._pick_duration(backend, job.duration_s)
             cost = backend.max_plausible_cost(duration_s, tier)
+
+            if job.free_only and cost > ZERO:
+                # A fill exists to keep the loop populated between paid
+                # generations. Letting it reach a metered rung would spend
+                # the budget the cadence was deliberately spacing out.
+                continue
 
             authorized, reservation = await self._reserve(backend, cost, job.zone)
             if not authorized:

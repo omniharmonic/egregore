@@ -123,6 +123,12 @@ class ConductorState:
         #: topology. Screens keep their own loop_phase_offset, so the walls
         #: stay in step without being identical.
         self.mirror_zone: str | None = None
+        #: Bound by the integration layer ONLY when the operator asked for it.
+        #: Returns the live transcript window and recent prompts, so a room
+        #: can be watched while it is being listened to. Off by default: this
+        #: is the one surface that can show transcript text, and PRD 6.8 says
+        #: that text otherwise never leaves the ring buffer.
+        self.monitor_provider: Callable[[], dict] | None = None
 
         self._manifests: dict[str, Manifest] = {}
         self._latest_frame: dict[str, FeatureFrame] = {}

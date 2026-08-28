@@ -215,6 +215,10 @@ class LiveSettings:
     resolution: str
     drift: float
     cadence_floor_s: float | None = None
+    #: Longest the loop may go without a new clip. When the budget cadence is
+    #: slower than this, the free renderer fills the gap so the pool keeps
+    #: growing and the loop stays continuous. None disables filling.
+    fill_interval_s: float | None = 45.0
 
     @classmethod
     def from_config(cls, cfg: EgregoreConfig) -> LiveSettings:
@@ -243,6 +247,10 @@ class LiveSettings:
         if "drift" in aes:
             self.drift = float(aes["drift"])
             changed.append("aesthetic.drift")
+        if "fill_interval_s" in overrides:
+            raw = overrides["fill_interval_s"]
+            self.fill_interval_s = float(raw) if raw else None
+            changed.append("fill_interval_s")
         if "cadence_floor_s" in overrides:
             raw = overrides["cadence_floor_s"]
             self.cadence_floor_s = float(raw) if raw else None
@@ -295,6 +303,8 @@ class ZonePipeline:
         #: visibility only — never a transcript, only the abstraction of one.
         self.last_prompt: str | None = None
         self.last_prompt_at: float = 0.0
+        #: When any clip was last asked for, paid or filled.
+        self._last_clip_request: float = 0.0
         #: False for a follower zone under the "mirror" topology. It still
         #: listens and contributes transcripts; it just does not commission
         #: video of its own, which is what makes mirror one stream for a
@@ -415,8 +425,19 @@ class ZonePipeline:
                     # since moved on. Stale imagery is worse than less imagery.
                     self.throttled += 1
                     continue
-                if not self.governor.should_generate(self.zone):
+                due = self.governor.should_generate(self.zone)
+                fill = False
+                if not due:
+                    gap = self.live.fill_interval_s
+                    if gap and (time.monotonic() - self._last_clip_request) >= gap:
+                        # The budget cadence can be minutes apart on a paid
+                        # backend. Left alone the loom has one or two clips to
+                        # work with, which reads as a stuttering loop rather
+                        # than a dream. Fill the gap on the free renderer.
+                        fill = True
+                if not due and not fill:
                     continue
+                self._last_clip_request = time.monotonic()
                 plan = self.loom.plan_next()
                 window = self.ring.snapshot()
                 borrowed: ThemeObject | None = None
@@ -442,6 +463,7 @@ class ZonePipeline:
                         theme_hint=borrowed,
                         seed_image=plan.seed_image,
                         extend_from=plan.use_extend,
+                        free_only=fill,
                     )
                     continue
                 result = await self.weaver.weave(
@@ -464,7 +486,10 @@ class ZonePipeline:
                 # video on screen came from what the room actually said.
                 self.last_prompt = result.prompt
                 self.last_prompt_at = time.time()
-                self.governor.record_generation(self.zone)
+                if not fill:
+                    # A fill must not reset the paid cadence, or the budget
+                    # would never be spent at all once filling starts.
+                    self.governor.record_generation(self.zone)
                 await self.forge.request(
                     zone=self.zone,
                     prompt=result.prompt,
@@ -473,6 +498,7 @@ class ZonePipeline:
                     theme_hint=result.theme,
                     seed_image=plan.seed_image,
                     extend_from=plan.use_extend,
+                    free_only=fill,
                 )
                 if result.theme is not None and not result.fallback:
                     self.mood.absorb_theme(result.theme)
@@ -714,6 +740,27 @@ async def run_party(cfg: EgregoreConfig, *, ignore_settings: bool = False) -> No
 
     state.ingest_handler = _ingest
     state.settings_handler = _apply_settings
+
+    if os.environ.get("EGREGORE_MONITOR") == "1":
+        def _monitor() -> dict:
+            return {
+                "zones": {
+                    zone: {
+                        "transcript": pipe.ring.snapshot(),
+                        "last_prompt": pipe.last_prompt,
+                        "last_prompt_at": pipe.last_prompt_at,
+                        "fragments": pipe.ring.occupancy()[0],
+                        "tokens": pipe.ring.token_count(),
+                    }
+                    for zone, pipe in pipelines.items()
+                }
+            }
+
+        state.monitor_provider = _monitor
+        log.warning(
+            "EGREGORE_MONITOR=1: live transcripts are readable from this machine "
+            "at /api/monitor for as long as this party runs"
+        )
     state.effective_config = cfg.model_dump(mode="json")
 
     app = create_app(state, lens_dir=_LENS_DIR, password=password)

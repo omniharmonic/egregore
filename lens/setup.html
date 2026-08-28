@@ -125,6 +125,12 @@
   .bar .num { color: var(--text); min-width: 5ch; text-align: right; }
   @media (prefers-reduced-motion: reduce) { .bar .fill { transition: none; } }
 
+  .transcript {
+    white-space: pre-wrap; word-break: break-word;
+    border-left: 2px solid var(--dimmer); padding: 8px 10px; margin: 6px 0 12px;
+    color: var(--text); max-height: 9em; overflow-y: auto;
+  }
+  .prompt-themes { color: var(--accent); }
   .lens-pick { display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 4px 0 8px; }
   .lens-pick label { color: var(--dim); display: inline-flex; align-items: center;
                      gap: 4px; cursor: pointer; }
@@ -188,6 +194,12 @@
       <span class="tag restart">restart</span> applies on the next run
     </p>
     <div id="settings"></div>
+  </section>
+
+  <section class="panel" style="flex-basis: 100%;">
+    <h2>monitor</h2>
+    <p class="hint" id="monHint">&nbsp;</p>
+    <div id="monitor"></div>
   </section>
 
   <section class="panel" style="flex-basis: 100%;">
@@ -300,6 +312,7 @@
     mSave: $('mSave'), mErr: $('mErr'),
     keysHint: $('keysHint'), zones: $('zones'), meter: $('meter'),
     nodes: $('nodes'), nodesHint: $('nodesHint'),
+    monitor: $('monitor'), monHint: $('monHint'),
     audioHint: $('audioHint')
   };
 
@@ -386,7 +399,7 @@
       var name = dig(state.settings.effective, 'party.name');
       el.party.textContent = name || 'egregore';
       renderSecrets(); renderSettings(); renderModels(); renderPrices();
-      renderZones(); renderAudio(); renderNodes();
+      renderZones(); renderAudio(); renderNodes(); renderMonitor();
     }).catch(function (err) {
       if (err && err.locked) { el.join.hidden = false; el.joinPass.focus(); return; }
       el.link.textContent = 'no route to host';
@@ -646,6 +659,60 @@
   }
 
   setInterval(renderNodes, 2000);
+
+  // ---- monitor -----------------------------------------------------------
+  //
+  // The one place transcript text is visible. Off unless the party was
+  // started with EGREGORE_MONITOR=1, and then only from this machine.
+
+  function renderMonitor() {
+    fetch('/api/monitor', { credentials: 'same-origin', cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (body) {
+        if (!body) return;
+        if (!body.enabled) {
+          el.monHint.className = 'hint';
+          el.monHint.textContent = body.why || 'monitor off';
+          el.monitor.textContent = '';
+          return;
+        }
+        el.monHint.className = 'hint warn';
+        el.monHint.textContent =
+          'Live transcripts are visible on this machine while this party runs. '
+          + 'Nothing here is written to disk.';
+        el.monitor.textContent = '';
+        Object.keys(body.zones).sort().forEach(function (zone) {
+          var z = body.zones[zone];
+
+          var head = document.createElement('div');
+          head.className = 'row';
+          var n = document.createElement('span');
+          n.className = 't'; n.style.minWidth = '15ch'; n.textContent = zone;
+          var meta = document.createElement('span');
+          meta.className = 'off';
+          meta.textContent = z.fragments + ' fragment(s) · ' + z.tokens + ' tokens';
+          head.appendChild(n); head.appendChild(meta);
+          el.monitor.appendChild(head);
+
+          var t = document.createElement('div');
+          t.className = 'transcript';
+          t.textContent = z.transcript || '(nothing heard yet)';
+          el.monitor.appendChild(t);
+
+          var themes = (z.last_prompt || '').match(/Render these themes[^\n]*/);
+          var pal = (z.last_prompt || '').match(/Elemental palette[^\n]*/);
+          var p = document.createElement('div');
+          p.className = 'transcript prompt-themes';
+          p.textContent = themes
+            ? themes[0] + (pal ? '\n' + pal[0] : '')
+            : '(no prompt yet)';
+          el.monitor.appendChild(p);
+        });
+      })
+      .catch(function () { /* keep the last view */ });
+  }
+
+  setInterval(renderMonitor, 3000);
 
   // ---- zones ------------------------------------------------------------
 
