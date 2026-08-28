@@ -416,3 +416,39 @@ async def test_default_topology_is_independent(tmp_path):
     assert cfg.continuity.topology == "independent"
     async with Party(cfg) as party:
         assert party.state.mirror_zone is None
+
+
+async def test_music_shaped_noise_does_not_reach_the_ring(tmp_path, monkeypatch):
+    """A room with music makes the VAD open on things that are not speech.
+
+    A recogniser handed non-speech returns one or two confident-looking
+    words, and in the buffer those are indistinguishable from real short
+    replies — except that they carry no theme and crowd out the utterances
+    that do. Measured in a live room: 17 "utterances" averaging 2.4 words,
+    with music playing and nobody talking.
+    """
+    cfg = _cfg(tmp_path, zones=[{"id": "main", "mic": {"type": "fixture"}}])
+    async with Party(cfg) as party:
+        pipe = party.pipelines["main"]
+
+        class Fake:
+            def __init__(self, text):
+                self.text = text
+
+            async def transcribe(self, pcm, rate):
+                return self.text
+
+        pipe._transcriber = Fake("the")
+        await pipe._on_speech_audio(b"\x00\x01" * 8000, 16000)
+        assert pipe.discarded_fragments == 1
+
+        pipe._transcriber = Fake("yeah okay")
+        await pipe._on_speech_audio(b"\x00\x01" * 8000, 16000)
+        assert pipe.discarded_fragments == 2
+
+        # A real sentence is kept.
+        before = pipe.ring.token_count()
+        pipe._transcriber = Fake("the tide pools were glowing green last night")
+        await pipe._on_speech_audio(b"\x00\x01" * 8000, 16000)
+        assert pipe.ring.token_count() > before
+        assert pipe.discarded_fragments == 2

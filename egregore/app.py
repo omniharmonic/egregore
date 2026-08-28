@@ -139,6 +139,10 @@ def _comfy_workflow() -> dict | None:
 #: 0 to disable throughput pacing entirely and go back to pure budget cadence.
 _PACING_ENV = "EGREGORE_MIN_CLIP_INTERVAL_S"
 
+#: A transcription shorter than this is treated as noise rather than speech.
+#: Overridable because a quiet gallery and a loud party want different floors.
+_MIN_TRANSCRIPT_WORDS = int(os.environ.get("EGREGORE_MIN_TRANSCRIPT_WORDS", "3"))
+
 #: Pending clips per zone above which the loop stops asking for more.
 _MAX_QUEUE_DEPTH = int(os.environ.get("EGREGORE_MAX_QUEUE_DEPTH", "3"))
 
@@ -305,6 +309,10 @@ class ZonePipeline:
         self.last_prompt_at: float = 0.0
         #: When any clip was last asked for, paid or filled.
         self._last_clip_request: float = 0.0
+        #: Transcriptions dropped as too short to be speech. Visible to the
+        #: operator, because a high count means the room is noisy rather than
+        #: the microphone being broken.
+        self.discarded_fragments = 0
         #: False for a follower zone under the "mirror" topology. It still
         #: listens and contributes transcripts; it just does not commission
         #: video of its own, which is what makes mirror one stream for a
@@ -389,8 +397,20 @@ class ZonePipeline:
         if self.muted:
             return
         text = await self._transcriber.transcribe(pcm, sample_rate)
-        if text:
-            self.ring.add(text)
+        if not text:
+            return
+        if len(text.split()) < _MIN_TRANSCRIPT_WORDS:
+            # A room with music in it makes the VAD open on things that are
+            # not speech, and a recogniser handed non-speech returns one or
+            # two confident-looking words. Those are indistinguishable from
+            # real short replies in the buffer, but they carry no theme and
+            # they crowd out the utterances that do. Dropping them is the
+            # difference between a prompt about the room and a prompt about
+            # nothing (measured: 17 "utterances" averaging 2.4 words, with
+            # music playing and nobody talking).
+            self.discarded_fragments += 1
+            return
+        self.ring.add(text)
 
     # -- output wiring ------------------------------------------------------
 
@@ -544,6 +564,7 @@ class ZonePipeline:
             "purges": self.weaver.purges_requested,
             "bleeds": self.bleeds,
             "throttled": self.throttled,
+            "discarded_fragments": self.discarded_fragments,
             **self.loom.status(),
         }
 

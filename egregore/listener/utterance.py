@@ -13,7 +13,8 @@ utterance at once. A recogniser given a sentence returns a sentence.
 Two bounds keep it honest:
 
 * ``hangover_ms`` — how much silence ends an utterance. Too short and a
-  sentence is chopped at its commas; too long and imagery lags the room.
+  sentence is chopped at its commas, which is what a room with music in it
+  does to a gate that reacts quickly; too long and imagery lags the room.
 * ``max_utterance_s`` — a hard ceiling, so a room that never falls silent
   (music, a crowd) still produces transcripts at a steady rate rather than
   growing one buffer forever.
@@ -31,9 +32,9 @@ log = logging.getLogger(__name__)
 
 __all__ = ["UtteranceAssembler"]
 
-DEFAULT_HANGOVER_MS = 700.0
+DEFAULT_HANGOVER_MS = 900.0
 DEFAULT_MAX_UTTERANCE_S = 12.0
-DEFAULT_MIN_UTTERANCE_MS = 350.0
+DEFAULT_MIN_UTTERANCE_MS = 500.0
 
 
 class UtteranceAssembler:
