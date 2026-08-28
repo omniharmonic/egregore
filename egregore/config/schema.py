@@ -84,7 +84,7 @@ class BudgetConfig(BaseModel):
     spend_curve: list[SpendCurvePoint] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _curve_endpoints(self) -> "BudgetConfig":
+    def _curve_endpoints(self) -> BudgetConfig:
         if self.spend_curve:
             fracs = [p.frac for p in self.spend_curve]
             if fracs != sorted(fracs):
@@ -164,7 +164,7 @@ class EgregoreConfig(BaseModel):
     demo_time_scale: float = Field(1.0, gt=0)  # >1 speeds up demo cadence
 
     @model_validator(mode="after")
-    def _zone_ids_unique(self) -> "EgregoreConfig":
+    def _zone_ids_unique(self) -> EgregoreConfig:
         ids = [z.id for z in self.zones]
         if len(ids) != len(set(ids)):
             raise ValueError("zone ids must be unique")
