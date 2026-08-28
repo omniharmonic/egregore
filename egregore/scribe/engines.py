@@ -33,6 +33,13 @@ __all__ = [
 # Engine names as spelled in AsrConfig.engine.
 ENGINES = ("parakeet", "faster-whisper", "fixture")
 
+#: Where ParakeetTranscriber looks for a local ONNX export when
+#: ``EGREGORE_PARAKEET_ONNX_DIR`` is unset. Overridable per deployment.
+_DEFAULT_ONNX_DIR = os.path.expanduser("~/.egregore/models/parakeet-v2-int8")
+
+#: onnx-asr's name for the Parakeet TDT transducer topology.
+_ONNX_MODEL_TYPE = "nemo-conformer-tdt"
+
 
 class FixtureTranscriber:
     """Demo-mode engine. **Not audio-driven.**
@@ -71,28 +78,62 @@ class ParakeetTranscriber:
 
     name = "parakeet"
 
+    #: "onnx" (local int8 export) or "nemo" (the CUDA-first reference stack).
+    backend = "nemo"
+    _onnx = None
+    _model = None
+
     def __init__(
         self,
         language: str = "en",
         model_name: str = "nvidia/parakeet-tdt-0.6b-v3",
         device: str | None = None,
+        onnx_dir: str | None = None,
     ) -> None:
+        self.language = language
+        self.model_name = model_name
+        self._lock = asyncio.Lock()
+
+        # Prefer a local ONNX export when one is present. NeMo is a CUDA-first
+        # stack that installs poorly on Apple Silicon, while the same Parakeet
+        # TDT weights exported to int8 ONNX run on CoreML/CPU at many times
+        # real time. Same model, same transducer, far cheaper to deploy.
+        onnx_dir = onnx_dir or os.environ.get("EGREGORE_PARAKEET_ONNX_DIR") or _DEFAULT_ONNX_DIR
+        onnx_error: Exception | None = None
+        if onnx_dir and os.path.isdir(onnx_dir):
+            try:
+                import onnx_asr  # type: ignore[import-not-found]
+
+                self._onnx = onnx_asr.load_model(
+                    _ONNX_MODEL_TYPE, onnx_dir, quantization="int8"
+                )
+                self.backend = "onnx"
+                self.model_path = onnx_dir
+                logger.info("parakeet: onnx backend from %s", onnx_dir)
+                return
+            except Exception as exc:  # fall through to NeMo
+                onnx_error = exc
+                logger.warning("parakeet: onnx backend unavailable (%s)", type(exc).__name__)
+
         try:
             from nemo.collections.asr.models import ASRModel  # type: ignore[import-not-found]
         except ImportError as exc:  # pragma: no cover - exercised only without nemo
             raise RuntimeError(
-                "Parakeet ASR requires NeMo, which is not installed. "
-                "Install it with: pip install 'nemo_toolkit[asr]' "
-                "(or set asr.engine to 'faster-whisper' or 'fixture')"
+                "Parakeet ASR needs either a local ONNX export or NeMo, and found "
+                "neither. Point EGREGORE_PARAKEET_ONNX_DIR at a Parakeet TDT ONNX "
+                "directory (encoder-model.int8.onnx, decoder_joint-model.int8.onnx, "
+                "nemo128.onnx, vocab.txt, config.json) and `pip install onnx-asr "
+                "onnxruntime`, or install NeMo with: pip install 'nemo_toolkit[asr]' "
+                "(or set asr.engine to 'faster-whisper' or 'fixture')."
+                + (f" ONNX load failed with: {onnx_error!r}" if onnx_error else "")
             ) from exc
 
-        self.language = language
-        self.model_name = model_name
         self._model = ASRModel.from_pretrained(model_name=model_name)
         self._model.eval()
         if device:
             self._model = self._model.to(device)
-        self._lock = asyncio.Lock()
+        self.backend = "nemo"
+        self.model_path = model_name
 
     async def transcribe(self, pcm: bytes, sample_rate: int) -> str | None:
         if not pcm:
@@ -107,6 +148,9 @@ class ParakeetTranscriber:
     def _transcribe_sync(self, pcm: bytes, sample_rate: int) -> str | None:
         path = _write_temp_wav(pcm, sample_rate)
         try:
+            if self.backend == "onnx":
+                text = self._onnx.recognize(path)
+                return (text or "").strip() or None
             results = self._model.transcribe([path], batch_size=1, verbose=False)
         finally:
             _unlink(path)

@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import secrets
+from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
 
@@ -62,7 +64,13 @@ def build_ladder(cfg: EgregoreConfig, store: ClipStore) -> list[VideoBackend]:
     elif want_cloud:
         log.warning("cloud backend requested but GEMINI_API_KEY is not set; skipping")
     if choice in ("local", "auto") or cfg.generation.fallback == "local":
-        rungs.append(ComfyUIBackend(store, base_url=cfg.generation.comfyui_url))
+        rungs.append(
+            ComfyUIBackend(
+                store,
+                base_url=cfg.generation.comfyui_url,
+                workflow=_comfy_workflow(),
+            )
+        )
     # The procedural renderer ("mock") is a real zero-cost backend, always last.
     rungs.append(
         MockBackend(
@@ -72,6 +80,78 @@ def build_ladder(cfg: EgregoreConfig, store: ClipStore) -> list[VideoBackend]:
         )
     )
     return rungs
+
+
+#: Operator-supplied ComfyUI graph in API format. ``ComfyUIBackend``'s built-in
+#: default is a plausible LTX-2 graph, not a contract (see forge/local.py), and
+#: every real install has its own node versions and checkpoint filenames — so
+#: prefer a graph exported from the actual box when one is present.
+_COMFY_WORKFLOW_ENV = "EGREGORE_COMFY_WORKFLOW"
+_DEFAULT_COMFY_WORKFLOW = Path(__file__).resolve().parent.parent / "presets" / "comfyui"
+
+
+def _comfy_workflow() -> dict | None:
+    """Load the operator's ComfyUI graph, or ``None`` to use the built-in default.
+
+    Keys beginning with ``_`` are stripped: they carry human notes, and ComfyUI
+    would otherwise reject them as nodes with no ``class_type``.
+    """
+    raw = os.environ.get(_COMFY_WORKFLOW_ENV)
+    path = Path(raw) if raw else _DEFAULT_COMFY_WORKFLOW / "ltxv-2b-gguf.json"
+    if not path.is_file():
+        if raw:
+            log.warning("%s points at %s, which does not exist; using the built-in graph",
+                        _COMFY_WORKFLOW_ENV, path)
+        return None
+    try:
+        graph = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        log.warning("could not read ComfyUI graph %s (%s); using the built-in graph",
+                    path, type(exc).__name__)
+        return None
+    log.info("comfyui graph loaded from %s", path)
+    return {k: v for k, v in graph.items() if not k.startswith("_")}
+
+
+#: Force a cadence floor in seconds, overriding what the ladder reports. Set to
+#: 0 to disable throughput pacing entirely and go back to pure budget cadence.
+_PACING_ENV = "EGREGORE_MIN_CLIP_INTERVAL_S"
+
+#: Pending clips per zone above which the loop stops asking for more.
+_MAX_QUEUE_DEPTH = int(os.environ.get("EGREGORE_MAX_QUEUE_DEPTH", "3"))
+
+
+def _throughput_floor(
+    cfg: EgregoreConfig, ladder: list[VideoBackend]
+) -> Callable[[], float] | None:
+    """A probe the Governor calls to learn how fast the hardware can go.
+
+    The same party config has to work on a datacentre GPU, a laptop, and a
+    cloud API, and those differ by two orders of magnitude in render time. So
+    the cadence floor is not a constant in a preset — it is read back from the
+    ladder's first (preferred) rung, which updates it as real timings arrive.
+    An operator who wants a fixed cadence sets ``EGREGORE_MIN_CLIP_INTERVAL_S``.
+    """
+    override = os.environ.get(_PACING_ENV)
+    if override is not None:
+        try:
+            fixed = float(override)
+        except ValueError:
+            log.warning("%s=%r is not a number; ignoring", _PACING_ENV, override)
+        else:
+            log.info("cadence floor pinned to %.1fs by %s", fixed, _PACING_ENV)
+            return (lambda: fixed) if fixed > 0 else None
+    if not ladder:
+        return None
+    preferred, tier = ladder[0], cfg.generation.model
+
+    def probe() -> float:
+        try:
+            return preferred.estimated_latency(tier).total_seconds()
+        except Exception:
+            return 0.0
+
+    return probe
 
 
 def cost_per_clip(cfg: EgregoreConfig, ladder: list[VideoBackend]) -> Decimal:
@@ -125,6 +205,7 @@ class ZonePipeline:
         )
         self._frame_n = 0
         self.bleeds = 0
+        self.throttled = 0
         self._tasks: list[asyncio.Task] = []
         self._source = self._build_source(cfg)
 
@@ -197,6 +278,14 @@ class ZonePipeline:
             try:
                 if self.bus.frozen:
                     continue  # operator freeze: loop keeps playing, nothing new
+                if self.forge.queue_depth(self.zone) >= _MAX_QUEUE_DEPTH:
+                    # Backpressure. The cadence floor should already keep us at
+                    # the backend's pace, but a backend that suddenly slows (a
+                    # bigger model, a busy GPU, a degraded API) would otherwise
+                    # build a backlog of prompts describing a room that has
+                    # since moved on. Stale imagery is worse than less imagery.
+                    self.throttled += 1
+                    continue
                 if not self.governor.should_generate(self.zone):
                     continue
                 plan = self.loom.plan_next()
@@ -289,6 +378,7 @@ class ZonePipeline:
             "validator_rejections": self.weaver.rejections,
             "purges": self.weaver.purges_requested,
             "bleeds": self.bleeds,
+            "throttled": self.throttled,
             **self.loom.status(),
         }
 
@@ -349,7 +439,10 @@ async def run_party(cfg: EgregoreConfig) -> None:
     store = ClipStore(Path(cfg.clip_store_dir))
     ladder = build_ladder(cfg, store)
     governor = Governor.from_config(
-        cfg, cost_per_clip=cost_per_clip(cfg, ladder), min_interval_s=60.0
+        cfg,
+        cost_per_clip=cost_per_clip(cfg, ladder),
+        min_interval_s=60.0,
+        throughput_floor_s=_throughput_floor(cfg, ladder),
     )
 
     pipelines: dict[str, ZonePipeline] = {}

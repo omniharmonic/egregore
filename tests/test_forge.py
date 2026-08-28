@@ -1067,3 +1067,57 @@ async def test_comfy_rejects_bad_duration_and_missing_text_node(store: ClipStore
         await headless.generate("p", 4, "ltx-2")
     await backend.close()
     await headless.close()
+
+
+# ---------------------------------------------------------------------------
+# ComfyUI latency learning — one config across very different hardware
+# ---------------------------------------------------------------------------
+
+
+async def test_comfy_seeds_latency_then_learns_from_observed_renders(
+    store: ClipStore,
+) -> None:
+    # Before any render the backend can only report the seed it was given.
+    backend = ComfyUIBackend(
+        store,
+        client=httpx.AsyncClient(transport=comfy_transport({})),
+        poll_interval_s=0.0,
+        initial_latency_s=60.0,
+        latency_smoothing=0.5,
+    )
+    assert backend.estimated_latency("ltx-2").total_seconds() == pytest.approx(60.0)
+
+    # The first observation replaces the seed outright rather than being
+    # averaged with it: a guess carries no evidence worth preserving.
+    backend._observe_latency(300.0)
+    assert backend.estimated_latency("ltx-2").total_seconds() == pytest.approx(300.0)
+
+    # Later observations move the estimate but do not let one slow render
+    # (a busy GPU, a cold model load) redefine the cadence on its own.
+    backend._observe_latency(100.0)
+    assert backend.estimated_latency("ltx-2").total_seconds() == pytest.approx(200.0)
+
+
+async def test_comfy_latency_ignores_nonsense_observations(store: ClipStore) -> None:
+    backend = ComfyUIBackend(
+        store,
+        client=httpx.AsyncClient(transport=comfy_transport({})),
+        poll_interval_s=0.0,
+        initial_latency_s=45.0,
+    )
+    backend._observe_latency(0.0)
+    backend._observe_latency(-12.0)
+    assert backend.estimated_latency("ltx-2").total_seconds() == pytest.approx(45.0)
+
+
+async def test_comfy_generate_records_its_own_wall_time(store: ClipStore) -> None:
+    # A completed generation must move the estimate off its seed, which is
+    # what lets the Governor pace to the box it is actually running on.
+    backend = ComfyUIBackend(
+        store,
+        client=httpx.AsyncClient(transport=comfy_transport({})),
+        poll_interval_s=0.0,
+        initial_latency_s=999.0,
+    )
+    await backend.generate("a prompt", 4, "ltx-2", zone="main")
+    assert backend.estimated_latency("ltx-2").total_seconds() < 999.0

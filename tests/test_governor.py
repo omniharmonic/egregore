@@ -630,3 +630,71 @@ def test_zero_budget_config_makes_cloud_calls_impossible() -> None:
         for backend in ("veo", "veo-quality", "anything")
     )
     assert gov.should_generate("main") is True
+
+
+# ---------------------------------------------------------------------------
+# Throughput floor -- the physical half of the cadence answer
+# ---------------------------------------------------------------------------
+
+
+def _gov(floor, *, budget: str = "0", clock: FakeClock | None = None) -> Governor:
+    clock = clock or FakeClock()
+    return Governor(
+        Decimal(budget),
+        CadenceSolver(
+            total_budget=Decimal(budget),
+            party_duration_s=14400,
+            zone_count=1,
+            clock=clock,
+            min_interval_s=30.0,
+        ),
+        ["main"],
+        cost_per_clip=Decimal("0"),
+        clock=clock,
+        throughput_floor_s=floor,
+    )
+
+
+def test_throughput_floor_absent_preserves_budget_only_cadence() -> None:
+    # No probe: a zero-budget party still paces on the solver's floor alone.
+    assert _gov(None).interval_for("main") == pytest.approx(30.0)
+
+
+def test_throughput_floor_raises_interval_to_backend_speed() -> None:
+    # A backend that needs 290s cannot be asked for a clip every 30s; the
+    # floor, not the budget, is what sets cadence on slow hardware.
+    assert _gov(lambda: 290.0).interval_for("main") == pytest.approx(290.0)
+
+
+def test_throughput_floor_never_lowers_a_slower_budget_cadence() -> None:
+    # A fast backend must not be allowed to outrun the money.
+    gov = _gov(lambda: 5.0)
+    assert gov.interval_for("main") == pytest.approx(30.0)
+
+
+def test_throughput_floor_tracks_a_backend_that_learns() -> None:
+    # The probe is called per query, so a backend revising its own estimate
+    # (EWMA over observed renders) re-paces the party without a restart.
+    observed = {"s": 60.0}
+    gov = _gov(lambda: observed["s"])
+    assert gov.interval_for("main") == pytest.approx(60.0)
+    observed["s"] = 300.0
+    assert gov.interval_for("main") == pytest.approx(300.0)
+
+
+@pytest.mark.parametrize("bad", [lambda: 0.0, lambda: -5.0, lambda: math.inf,
+                                 lambda: (_ for _ in ()).throw(RuntimeError("probe down"))])
+def test_throughput_floor_degrades_to_budget_cadence_when_probe_is_useless(bad) -> None:
+    # A broken or nonsensical probe must never stall generation entirely.
+    assert _gov(bad).interval_for("main") == pytest.approx(30.0)
+
+
+def test_throughput_floor_gates_should_generate() -> None:
+    clock = FakeClock()
+    gov = _gov(lambda: 120.0, clock=clock)
+    assert gov.should_generate("main") is True  # nothing generated yet
+    gov.record_generation("main")
+    clock.t += 60.0
+    assert gov.should_generate("main") is False  # backend still busy
+    clock.t += 61.0
+    assert gov.should_generate("main") is True

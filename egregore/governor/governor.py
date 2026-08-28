@@ -41,6 +41,7 @@ class Governor:
         *,
         cost_per_clip: Decimal,
         clock: Callable[[], float] = time.monotonic,
+        throughput_floor_s: Callable[[], float] | None = None,
     ) -> None:
         if not isinstance(cost_per_clip, Decimal):
             raise TypeError("cost_per_clip must be a Decimal (money is Decimal)")
@@ -50,6 +51,27 @@ class Governor:
         self.cost_per_clip = cost_per_clip
         self._last_generation: dict[str, float] = {}
         self.zones: list[str] = list(zones)
+        self.throughput_floor_s = throughput_floor_s
+
+    def _throughput_floor(self) -> float:
+        """Seconds the slowest-plausible backend needs to deliver one clip.
+
+        The cadence solver is purely economic: it answers "how often can we
+        afford this?", never "how often can the hardware do it?". Asking a box
+        for imagery faster than it can render only grows the queue — the extra
+        requests are not more imagery, just more backlog. This floor is the
+        physical half of the answer, and because it is a callable it tracks a
+        backend's *learned* latency as the party runs.
+
+        Returns 0.0 when unset, which preserves the pure-budget behaviour.
+        """
+        if self.throughput_floor_s is None:
+            return 0.0
+        try:
+            floor = float(self.throughput_floor_s())
+        except Exception:  # a broken probe must never stall generation
+            return 0.0
+        return floor if math.isfinite(floor) and floor > 0.0 else 0.0
 
     @classmethod
     def from_config(
@@ -59,11 +81,14 @@ class Governor:
         cost_per_clip: Decimal,
         clock: Callable[[], float] = time.monotonic,
         min_interval_s: float = DEFAULT_MIN_INTERVAL_S,
+        throughput_floor_s: Callable[[], float] | None = None,
     ) -> Governor:
         """Build a Governor from a party config.
 
         ``demo_time_scale`` compresses both the party duration and the cadence
-        floor, so a demo run exercises the same arithmetic at speed.
+        floor, so a demo run exercises the same arithmetic at speed. It does
+        *not* compress ``throughput_floor_s``: wall-clock render time is
+        physical and does not speed up because the demo clock does.
         """
         scale = float(config.demo_time_scale)
         duration_s = (config.party.duration_hours * 3600.0) / scale
@@ -82,6 +107,7 @@ class Governor:
             zones,
             cost_per_clip=cost_per_clip,
             clock=clock,
+            throughput_floor_s=throughput_floor_s,
         )
 
     # -- cadence ------------------------------------------------------------
@@ -106,7 +132,8 @@ class Governor:
             now_frac=self.solver.now_frac(now),
             cost_per_clip=self.cost_per_clip if cost_per_clip is None else cost_per_clip,
         )
-        return self.solver.min_interval_s if math.isinf(interval) else interval
+        interval = self.solver.min_interval_s if math.isinf(interval) else interval
+        return max(interval, self._throughput_floor())
 
     def continuity_interval_for(
         self,

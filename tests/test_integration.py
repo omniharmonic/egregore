@@ -222,7 +222,6 @@ async def test_freeze_drill(tmp_path):
         await party.wait_clips(1)
         handler = party.state.control_handler
         await handler("freeze", {"on": True})
-        n = len(party.store.all())
         await party.forge.join()  # drain in-flight work started pre-freeze
         n_settled = len(party.store.all())
         await asyncio.sleep(3.5)  # several generation-loop ticks
