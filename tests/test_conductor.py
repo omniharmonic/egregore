@@ -336,3 +336,140 @@ async def test_config_merges_screen_override_over_zone_default(tmp_path):
 
         resp3 = await client.get("/api/config", params={"zone": "nowhere"})
         assert resp3.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Configuration surface — settings, secret presence, catalogue
+# ---------------------------------------------------------------------------
+
+_LENS = Path(__file__).resolve().parent.parent / "lens"
+
+
+def _cfg_state(**kw) -> ConductorState:
+    """A ConductorState with nothing but the required resolver — these tests
+    exercise the configuration surface, which reads none of the party state."""
+    return ConductorState(clip_resolver=lambda clip_id: None, **kw)
+
+
+@pytest.fixture()
+def cfg_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("EGREGORE_HOME", str(tmp_path))
+    return tmp_path
+
+
+def test_secrets_endpoint_reports_presence_and_never_a_value(cfg_home, monkeypatch):
+    import json as _json
+
+    monkeypatch.setenv("FAL_KEY", "leak-me-if-you-can")
+    app = create_app(_cfg_state(), lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        body = client.get("/api/secrets").json()
+    assert body["FAL_KEY"] is True
+    assert "leak-me-if-you-can" not in _json.dumps(body)
+
+
+def test_settings_endpoints_require_the_password_even_when_party_auth_is_off(cfg_home):
+    # Watching the screens and reconfiguring the system are different trust
+    # levels; party auth being disabled must not open the settings surface.
+    app = create_app(_cfg_state(), lens_dir=_LENS, password=None)
+    with TestClient(app) as client:
+        assert client.get("/api/status").status_code == 200  # party auth off
+        assert client.get("/api/settings").status_code == 403
+        assert client.get("/api/secrets").status_code == 403
+        assert client.get("/api/models").status_code == 403
+        assert client.post("/api/settings", json={}).status_code == 403
+
+
+def test_settings_endpoints_open_with_the_password(cfg_home):
+    app = create_app(_cfg_state(), lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        assert client.get("/api/settings").status_code == 401  # not joined yet
+        client.post("/api/join", json={"password": "pw"})
+        assert client.get("/api/settings").status_code == 200
+
+
+def test_settings_post_separates_live_from_restart(cfg_home):
+    applied: list[dict] = []
+    state = _cfg_state()
+    state.settings_handler = lambda overrides: applied.append(overrides) or {"ok": True}
+    app = create_app(state, lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        body = client.post(
+            "/api/settings",
+            json={"generation": {"clip_duration_s": 6, "backend": "fal"}},
+        ).json()
+    assert body["applied_live"] == ["generation.clip_duration_s"]
+    assert body["restart_required"] == ["generation.backend"]
+    assert applied, "the live subset must reach the running party"
+
+
+def test_settings_post_rejects_an_invalid_value_without_persisting(cfg_home):
+    app = create_app(_cfg_state(), lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        r = client.post("/api/settings", json={"generation": {"clip_duration_s": 999}})
+        assert r.status_code == 400
+        assert client.get("/api/settings").json()["overrides"] == {}
+
+
+def test_settings_persist_and_merge_across_posts(cfg_home):
+    app = create_app(_cfg_state(), lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        client.post("/api/settings", json={"generation": {"clip_duration_s": 6}})
+        client.post("/api/settings", json={"aesthetic": {"drift": 0.7}})
+        overrides = client.get("/api/settings").json()["overrides"]
+    assert overrides["generation"]["clip_duration_s"] == 6
+    assert overrides["aesthetic"]["drift"] == 0.7, "a later post must not erase an earlier one"
+
+
+def test_models_crud(cfg_home):
+    app = create_app(_cfg_state(), lens_dir=_LENS, password="pw")
+    entry = {
+        "provider": "fal",
+        "model_id": "vendor/thing/text-to-video",
+        "price_per_second": {"720P": "0.07"},
+        "default_resolution": "720P",
+        "allowed_durations_s": [5, 10],
+    }
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        assert client.post("/api/models", json={"key": "thing", **entry}).status_code == 200
+        listed = client.get("/api/models").json()
+        assert "thing" in listed
+        assert listed["thing"]["builtin"] is False
+        assert listed["minimax-h3-max"]["builtin"] is True
+        assert client.delete("/api/models/thing").status_code == 200
+        assert "thing" not in client.get("/api/models").json()
+
+
+def test_models_post_rejects_a_nonpositive_price(cfg_home):
+    app = create_app(_cfg_state(), lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        r = client.post("/api/models", json={
+            "key": "free-lunch", "provider": "fal", "model_id": "x/y",
+            "price_per_second": {"720P": "0"}, "default_resolution": "720P",
+            "allowed_durations_s": [5],
+        })
+        # A zero price reserves nothing against the ceiling (PRD B-2).
+        assert r.status_code == 400
+        assert "free-lunch" not in client.get("/api/models").json()
+
+
+def test_models_post_needs_a_key(cfg_home):
+    app = create_app(_cfg_state(), lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        assert client.post("/api/models", json={"model_id": "x/y"}).status_code == 400
+
+
+def test_builtin_model_cannot_be_deleted(cfg_home):
+    app = create_app(_cfg_state(), lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        r = client.delete("/api/models/minimax-h3-max")
+        assert r.status_code == 400
+        assert "minimax-h3-max" in client.get("/api/models").json()
