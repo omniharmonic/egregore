@@ -20,6 +20,7 @@ import time
 
 import httpx
 
+from egregore.config import store as config_store
 from egregore.forge.fal import DEFAULT_BASE_URL, FAL_MODELS, SAFETY_FACTOR
 
 PROMPT = (
@@ -37,6 +38,9 @@ async def main() -> int:
     ap.add_argument("--resolution", default="480P", choices=["480P", "768P"])
     args = ap.parse_args()
 
+    # The setup wizard writes ~/.egregore/env; read it the same way a
+    # party does, so a key that works there works here.
+    config_store.load_env_file()
     key = os.environ.get("FAL_KEY")
     if not key:
         print("FAL_KEY is not set. export it and re-run.", file=sys.stderr)
@@ -85,20 +89,23 @@ async def main() -> int:
         if r.status_code >= 400:
             print(f"submit failed: HTTP {r.status_code}\n{r.text[:600]}", file=sys.stderr)
             return 1
-        rid = r.json()["request_id"]
+        submitted = r.json()
+        rid = submitted["request_id"]
         print(f"request_id: {rid}")
 
-        base = f"{DEFAULT_BASE_URL}/{model.model_id}/requests/{rid}"
+        # fal's own URLs: it does not put the whole model id in them.
+        status_url = submitted["status_url"]
+        result_url = submitted["response_url"]
         while time.monotonic() - t0 < 900:
             await asyncio.sleep(3)
-            s = await http.get(f"{base}/status", headers=headers)
+            s = await http.get(status_url, headers=headers)
             body = s.json()
             if body.get("error"):
                 print(f"FAILED: {body.get('error_type')} — {body.get('error')}")
                 return 1
             status = body.get("status")
             if status == "COMPLETED":
-                res = (await http.get(base, headers=headers)).json()
+                res = (await http.get(result_url, headers=headers)).json()
                 url = (res.get("video") or {}).get("url")
                 print(f"done in {time.monotonic() - t0:.0f}s")
                 print(f"video: {url}")

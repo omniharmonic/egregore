@@ -1155,6 +1155,8 @@ async def test_comfy_generate_records_its_own_wall_time(store: ClipStore) -> Non
 FAL_VIDEO_URL = "https://v3.fal.media/files/rabbit/abc123.mp4"
 FAL_BYTES = b"\x00\x00\x00\x18ftypmp42" + b"fal-clip-bytes" * 8
 FAL_MODEL_ID = "minimax/h3-max/text-to-video"
+#: Where fal actually serves the request, which is not the submit path.
+FAL_SHORT = "https://queue.fal.run/minimax/h3-max"
 
 
 def fal_transport(
@@ -1172,9 +1174,17 @@ def fal_transport(
             recorder["payload"] = json.loads(request.content)
             if submit_status != 200:
                 return httpx.Response(submit_status, json={"detail": "nope"})
-            return httpx.Response(200, json={"request_id": "req-1"})
+            # fal replies with its own URLs, and they do not carry the whole
+            # model id: submitting to minimax/h3-max/text-to-video yields
+            # status at minimax/h3-max/requests/{id}/status. Mirroring that
+            # here is what stops the backend inventing a 404.
+            return httpx.Response(200, json={
+                "request_id": "req-1",
+                "status_url": f"{FAL_SHORT}/requests/req-1/status",
+                "response_url": f"{FAL_SHORT}/requests/req-1",
+            })
 
-        if request.method == "GET" and url.endswith("/requests/req-1/status"):
+        if request.method == "GET" and url == f"{FAL_SHORT}/requests/req-1/status":
             state["polls"] += 1
             if fail_with is not None:
                 return httpx.Response(
@@ -1186,7 +1196,7 @@ def fal_transport(
             recorder["polls"] = state["polls"]
             return httpx.Response(200, json={"status": "COMPLETED"})
 
-        if request.method == "GET" and url.endswith("/requests/req-1"):
+        if request.method == "GET" and url == f"{FAL_SHORT}/requests/req-1":
             return httpx.Response(
                 200,
                 json={"video": {"url": FAL_VIDEO_URL, "content_type": "video/mp4"},
@@ -1341,7 +1351,48 @@ async def test_fal_health_needs_a_key(store: ClipStore) -> None:
 async def test_fal_learns_its_queue_latency(store: ClipStore) -> None:
     backend = fal_backend(store, fal_transport({}))
     seeded = backend.estimated_latency("minimax-h3-max").total_seconds()
-    assert seeded == pytest.approx(90.0)
+    # Seeded low on purpose: the Governor will not schedule faster than this,
+    # so a pessimistic seed stalls the first clip and with it the measurement
+    # that would have corrected the seed.
+    assert seeded == pytest.approx(20.0)
     await backend.generate("p", 5, "minimax-h3-max", zone="main")
     assert backend.estimated_latency("minimax-h3-max").total_seconds() < seeded
+    await backend.close()
+
+
+async def test_fal_follows_the_urls_fal_returns_not_ones_it_builds(store: ClipStore) -> None:
+    # Submitting to minimax/h3-max/text-to-video yields a status URL at
+    # minimax/h3-max/requests/{id}/status. Building that path from the model
+    # id instead produced a 404 against the real service.
+    recorder: dict = {}
+    backend = fal_backend(store, fal_transport(recorder))
+    await backend.generate("p", 5, "minimax-h3-max", zone="main")
+    polled = [u for m, u in recorder["requests"] if m == "GET" and "/requests/" in u]
+    assert polled, "the backend must poll somewhere"
+    for url in polled:
+        assert "/text-to-video/requests/" not in url, f"invented path: {url}"
+        assert url.startswith(FAL_SHORT + "/requests/")
+    await backend.close()
+
+
+async def test_fal_advertises_only_the_model_it_was_configured_with(store: ClipStore) -> None:
+    # The Forge maps an unsupported tier onto sorted(tiers)[0]. Advertising
+    # the whole catalogue therefore meant asking for minimax-h3-max and
+    # silently generating on minimax-h3, which sorts first.
+    backend = FalBackend(store, model="minimax-h3-max", api_key="k")
+    assert backend.capabilities.tiers == frozenset({"minimax-h3-max"})
+    assert sorted(backend.capabilities.tiers)[0] == "minimax-h3-max"
+
+
+async def test_fal_generates_on_the_configured_model_when_asked_for_another(
+    store: ClipStore,
+) -> None:
+    recorder: dict = {}
+    backend = fal_backend(store, fal_transport(recorder), model="minimax-h3-max")
+    # A party config's `model` is a cloud tier name like veo-3.1-lite; it must
+    # not silently select a different fal model.
+    ref = await backend.generate("p", 5, "veo-3.1-lite", zone="main")
+    assert ref.tier == "minimax-h3-max"
+    submit = [u for m, u in recorder["requests"] if m == "POST"][0]
+    assert submit.endswith("minimax/h3-max/text-to-video"), submit
     await backend.close()

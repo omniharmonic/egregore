@@ -78,8 +78,11 @@ class FalModel:
     provider: str = "fal"
     #: Extra body fields sent on every request (model-specific knobs).
     extra_input: dict = field(default_factory=dict)
-    #: Rough wall time for one clip; refined by observation once running.
-    initial_latency_s: float = 90.0
+    #: Rough wall time for one clip, refined by observation once running.
+    #: Seeded low rather than high on purpose: the Governor will not schedule
+    #: faster than this, so a pessimistic seed stalls the *first* clip and
+    #: therefore stalls the measurement that would correct it.
+    initial_latency_s: float = 20.0
     #: Most models take a first frame only as a URL we would have to host, so
     #: seeding is off unless a model is known to accept inline data.
     supports_image_seed: bool = False
@@ -100,7 +103,9 @@ FAL_MODELS: dict[str, FalModel] = {
         default_resolution="768P",
         allowed_durations_s=frozenset({5, 6, 7, 8}),
         extra_input={"prompt_expansion_mode": "balanced"},
-        initial_latency_s=90.0,
+        # Measured at ~7s for a 5s clip on 2026-08-28; seeded a little above
+        # that so a slow queue does not immediately swamp the loop.
+        initial_latency_s=20.0,
     ),
     "minimax-h3": FalModel(
         model_id="minimax/h3/text-to-video",
@@ -108,7 +113,7 @@ FAL_MODELS: dict[str, FalModel] = {
         default_resolution="768P",
         allowed_durations_s=frozenset({5, 6, 7, 8}),
         extra_input={"prompt_expansion_mode": "balanced"},
-        initial_latency_s=90.0,
+        initial_latency_s=20.0,
     ),
 }
 
@@ -192,7 +197,11 @@ class FalBackend:
             # runs as mosaic rather than as a chain.
             supports_native_extend=False,
             supports_image_seed=self.model.supports_image_seed,
-            tiers=frozenset(self.catalogue),
+            # Only the model this rung was configured with. Advertising the
+            # whole catalogue meant the Forge, asked for a tier this backend
+            # does not offer, fell back to sorted(tiers)[0] — so an operator
+            # who chose minimax-h3-max silently got minimax-h3 instead.
+            tiers=frozenset({self.model_key}),
             max_chain_length=0,
         )
 
@@ -277,8 +286,8 @@ class FalBackend:
             )
 
         started = time.monotonic()
-        request_id = await self._submit(model, prompt, duration_s)
-        video_url = await self._poll(model, request_id)
+        status_url, result_url = await self._submit(model, prompt, duration_s)
+        video_url = await self._poll(status_url, result_url)
 
         tmp_path = self.store.temp_path()
         try:
@@ -333,7 +342,19 @@ class FalBackend:
         body.update(model.extra_input)
         return body
 
-    async def _submit(self, model: FalModel, prompt: str, duration_s: int) -> str:
+    async def _submit(self, model: FalModel, prompt: str, duration_s: int) -> tuple[str, str]:
+        """Queue a generation. Returns fal's own (status_url, response_url).
+
+        Those URLs are taken from the reply rather than built from the model
+        id, because fal does not put the whole id in them: submitting to
+        ``minimax/h3-max/text-to-video`` yields status at
+        ``minimax/h3-max/requests/{id}/status``. Constructing them here
+        produced a 404 against the real service that no amount of mocking
+        would have caught, since the mock built them the same wrong way.
+        """
+        log.info(
+            "fal submit model=%s url=%s/%s", self.model_key, self.base_url, model.model_id
+        )
         response = await self._http().post(
             f"{self.base_url}/{model.model_id}",
             json=self._build_input(model, prompt, duration_s),
@@ -343,14 +364,19 @@ class FalBackend:
             raise RuntimeError(
                 f"{self.name}: submit returned HTTP {response.status_code}"
             )
-        request_id = response.json().get("request_id")
+        body = response.json()
+        request_id = body.get("request_id")
         if not request_id:
             raise RuntimeError(f"{self.name}: submit returned no request_id")
-        return str(request_id)
+        status_url = body.get("status_url") or (
+            f"{self.base_url}/{model.model_id}/requests/{request_id}/status"
+        )
+        response_url = body.get("response_url") or (
+            f"{self.base_url}/{model.model_id}/requests/{request_id}"
+        )
+        return str(status_url), str(response_url)
 
-    async def _poll(self, model: FalModel, request_id: str) -> str:
-        status_url = f"{self.base_url}/{model.model_id}/requests/{request_id}/status"
-        result_url = f"{self.base_url}/{model.model_id}/requests/{request_id}"
+    async def _poll(self, status_url: str, result_url: str) -> str:
         deadline = time.monotonic() + self.timeout_s
         while True:
             response = await self._http().get(status_url, headers=self._headers())

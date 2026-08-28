@@ -20,6 +20,7 @@ import time
 
 import httpx
 
+from egregore.config import store as config_store
 from egregore.forge.veo import COST_PER_SECOND_BY_RESOLUTION, DEFAULT_MODEL_IDS
 
 BASE = "https://generativelanguage.googleapis.com/v1beta"
@@ -31,6 +32,9 @@ async def main() -> int:
     ap.add_argument("--tier", default="veo-3.1-lite", choices=sorted(DEFAULT_MODEL_IDS))
     args = ap.parse_args()
 
+    # The setup wizard writes ~/.egregore/env; read it the same way a
+    # party does, so a key that works there works here.
+    config_store.load_env_file()
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
         print("GEMINI_API_KEY is not set. export it and re-run.", file=sys.stderr)
