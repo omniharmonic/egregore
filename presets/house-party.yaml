@@ -45,7 +45,7 @@ screens:
   - id: "projector"
     loop_phase_offset: 0.0
   - id: "corner-tv"
-    lens_stack: ["liquid", "chroma"]
+    lens_stack: ["liquid", "chroma", "crt"]
     loop_phase_offset: 0.5
 
 privacy:

@@ -39,6 +39,12 @@ Copy the closest preset from `presets/` and edit:
 - `budget.total_usd`: **this is the hard ceiling.** `0` = no cloud, ever.
 - `aesthetic.grammar`: the party's visual language — the highest-leverage
   text in the system. Iterate on it.
+- `lens_stack` per zone/screen, from the ten lenses: `feedback`,
+  `kaleidoscope`, `flow`, `chroma`, `bloom`, `liquid` (organic), and
+  `glitch`, `pixelsort`, `crt`, `corrupt` (structured glitch art —
+  content-derived block displacement, luminance sorting, phosphor CRT,
+  datamosh-style corruption; all clear to clean when the room is quiet).
+  Tune live on any screen with `?stack=flow,glitch,crt`.
 - `serving.password_env`: export `EGREGORE_PARTY_PASSWORD=...` before start
   (or leave unset on a trusted LAN — auth is then disabled).
 
@@ -68,8 +74,10 @@ The console prints the join URL and password once. On each screen: open the
 URL with its zone (`/?zone=hearth&screen=bar-panel`), enter password, tap to
 go fullscreen. Done — walk away.
 
-- Operator status: `http://<core-ip>:8420/api/status` (JSON: spend, queues,
-  screens, privacy panel).
+- Operator dashboard: `http://<core-ip>:8420/static/status.html` (terminal-
+  style live view; raw JSON at `/api/status`). Controls: `POST
+  /api/control/freeze|mute|mode` — freeze generation, mute a zone, switch
+  mosaic/continuity live.
 - HUD on any screen: append `?hud=1`.
 
 ## 5. Shutdown

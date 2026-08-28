@@ -42,7 +42,7 @@ zones:
     screens: ["wall-north", "wall-south"]
   - id: "bar"
     mic: { type: "network", host: "listener-02.local" }
-    lens_stack: ["feedback", "chroma"]
+    lens_stack: ["feedback", "glitch", "pixelsort"]
     screens: ["bar-panel"]
   - id: "chill"
     mic: { type: "network", host: "listener-03.local" }

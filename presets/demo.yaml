@@ -36,7 +36,7 @@ asr:
 zones:
   - id: "main"
     mic: { type: "fixture" }   # uses the built-in demo conversation
-    lens_stack: ["flow", "feedback", "bloom"]
+    lens_stack: ["flow", "feedback", "glitch", "crt"]
     screens: ["screen-1"]
 
 screens:
