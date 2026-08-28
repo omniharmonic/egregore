@@ -224,9 +224,16 @@ class ZoneLoom:
                 new_movement=True,
             )
 
+        # Both ways of continuing the movement are offered, and the caller
+        # keeps whichever its backend supports (see this class's note on
+        # capability-blindness). A backend that can natively extend uses the
+        # clip; one that can only continue from a picture — local diffusion —
+        # uses the frame. Offering the clip alone left seed-only backends
+        # rendering an unrelated clip into every slot of what the chain
+        # counter was calling one continuous movement.
         return GenerationPlan(
             use_extend=self._last_clip,
-            seed_image=None,
+            seed_image=self.last_frame,
             movement_descriptor=descriptor,
             new_movement=False,
         )

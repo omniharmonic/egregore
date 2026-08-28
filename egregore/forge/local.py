@@ -252,12 +252,17 @@ class ComfyUIBackend:
         wall_s = time.monotonic() - started
         self._observe_latency(wall_s)
         log.info(
-            "local clip backend=%s zone=%s duration=%ds wall=%.1fs latency_est=%.1fs",
+            "local clip backend=%s zone=%s duration=%ds wall=%.1fs "
+            "latency_est=%.1fs seeded=%s",
             self.name,
             zone,
             duration_s,
             wall_s,
             self._latency_s,
+            # Whether this clip actually continued the previous one. Without
+            # it there is no way to tell a seeded chain from a run of
+            # unrelated clips that merely happen to share a palette.
+            seed_name is not None,
         )
         return ref
 

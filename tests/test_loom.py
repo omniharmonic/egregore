@@ -245,17 +245,35 @@ async def test_continuity_chain_reaches_ceiling_and_hands_off(tmp_path: Path):
     assert loom.movements[1].clip_ids == ["c3"]
 
 
-async def test_continuity_mid_chain_offers_extend():
+async def test_continuity_mid_chain_offers_both_ways_to_continue():
+    # The Loom is capability-blind by construction: it offers every way of
+    # continuing the movement it has, and the integration layer picks the one
+    # the backend actually supports. Offering only ``use_extend`` here meant a
+    # backend that can continue *only* from an image — local diffusion, which
+    # cannot natively extend — rendered every mid-chain clip fresh while the
+    # chain counter kept climbing. The movement was bookkeeping, not picture.
     loom = ZoneLoom("main", "continuity", max_chain_length=5, clock=lambda: 0.0)
     loom._start_movement()  # simulate a movement already underway
     loom._pending_handoff = False
     loom.current_chain_length = 1
     clip = make_clip("c0", created_at=0.0)
     loom._last_clip = clip
+    loom.last_frame = PNG_MAGIC + b"pretend-frame"
     plan = loom.plan_next()
     assert plan.use_extend == clip
     assert plan.new_movement is False
-    assert plan.seed_image is None
+    assert plan.seed_image == loom.last_frame
+
+
+async def test_continuity_mid_chain_seed_is_absent_until_a_frame_exists():
+    # Before any clip has landed there is no frame to continue from, and
+    # inventing one would be worse than starting fresh.
+    loom = ZoneLoom("main", "continuity", max_chain_length=5, clock=lambda: 0.0)
+    loom._start_movement()
+    loom._pending_handoff = False
+    loom.current_chain_length = 1
+    loom._last_clip = make_clip("c0", created_at=0.0)
+    assert loom.plan_next().seed_image is None
 
 
 async def test_continuity_ingest_tolerates_extraction_failure(tmp_path: Path):
