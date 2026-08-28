@@ -101,16 +101,20 @@ class NetworkSource:
             if now - heard <= self.merge_window_s
         )
 
-    async def feed(self, node_id: str, pcm: bytes, sample_rate: int) -> None:
+    async def feed(self, node_id: str, pcm: bytes, sample_rate: int) -> float | None:
         """Handle one block of PCM from one node.
 
         ``pcm`` is 16-bit signed little-endian mono. Publishes a merged
         feature frame for the zone always — the feature path is never gated
         (Architecture §2.1) — and forwards this node's audio to the Scribe
         only when the gate hears speech in it.
+
+        Returns this node's own level, so the operator's per-device meter
+        shows what that phone is hearing rather than the room's merged
+        maximum. ``None`` when nothing was processed.
         """
         if self._stopped or not pcm:
-            return
+            return None
         if len(pcm) % 2:
             # Decoding a truncated frame would shift every sample one byte
             # out of phase and produce plausible-looking garbage.
@@ -134,3 +138,4 @@ class NetworkSource:
             pcm, sample_rate
         ):
             await self.events.on_speech_audio(pcm, sample_rate)
+        return frame.rms

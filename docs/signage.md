@@ -46,3 +46,19 @@ the variant matching your configuration and place one at each microphone.
 
 Per PRD P-6 the switch must be real: wired so it zeroes that zone's ring
 buffer, not decorative.
+
+
+## When phones are microphones
+
+A party using `presets/party.yaml` takes its audio from guests' own devices.
+The posted notice needs one more sentence:
+
+> Phones acting as microphones send audio over this building's wifi to the
+> machine running Egregore, where it is turned into text and then discarded.
+> Audio is only sent while someone is speaking. Nothing is recorded, nothing
+> is kept, and nothing leaves the building.
+
+That is a stronger claim than the software can make on its own, so it is worth
+checking before a party that `budget.total_usd` is `0` — which makes any cloud
+backend structurally unreachable — or that the operator understands an
+abstracted prompt will cross the network if it is not.

@@ -472,9 +472,13 @@ def create_app(
                 node = state.nodes.get(node_id)
                 if node is None or not node.transmits:
                     continue
-                state.nodes.heartbeat(node_id)
+                level = None
                 if state.ingest_handler is not None:
-                    await state.ingest_handler(zone, node_id, data, 16000)
+                    level = await state.ingest_handler(zone, node_id, data, 16000)
+                # Record the level the source actually measured, so the
+                # operator's per-device meter is the phone's own signal
+                # rather than a placeholder.
+                state.nodes.heartbeat(node_id, level=level)
         except Exception:
             return
 

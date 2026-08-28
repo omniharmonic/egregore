@@ -668,14 +668,17 @@ async def run_party(cfg: EgregoreConfig) -> None:
         log.info("live settings changed: %s", ", ".join(changed) or "nothing")
         return {"applied": changed}
 
-    async def _ingest(zone: str, node_id: str, pcm: bytes, sample_rate: int) -> None:
+    async def _ingest(
+        zone: str, node_id: str, pcm: bytes, sample_rate: int
+    ) -> float | None:
         pipe = pipelines.get(zone)
         if pipe is None or pipe.network_source is None:
-            return
+            return None
         try:
-            await pipe.network_source.feed(node_id, pcm, sample_rate)
+            return await pipe.network_source.feed(node_id, pcm, sample_rate)
         except ValueError as exc:      # a malformed frame is one node's bug
             log.warning("zone %s: bad ingest frame from a node (%s)", zone, exc)
+            return None
 
     state.ingest_handler = _ingest
     state.settings_handler = _apply_settings

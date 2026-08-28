@@ -33,6 +33,42 @@ theme abstraction, privacy validator, spend ledger, generation queue, growing
 loop, WebGL lens — from a scripted fixture conversation and a procedural
 ffmpeg renderer. `ffmpeg` on your PATH is the only hard dependency.
 
+## Run a party
+
+```bash
+uv run egregore run presets/party.yaml
+```
+
+The banner prints the address. Anyone on the same wifi opens it on a phone and
+is asked one question — **what is this device?**
+
+| choice | what it does |
+|---|---|
+| **listen** | its microphone joins a room, and what is said there shapes the dream |
+| **show** | it becomes a screen playing that room's loop |
+| **both** | it listens and shows at once |
+
+Many phones can listen in the same room; every one of them feeds that room's
+transcript, so a zone hears the conversation rather than one person. The
+operator watches `/static/setup.html`, where every device shows its room, its
+level, and buttons to mute or remove it. Enrolling needs no password — that
+moment is the point — so control is exercised afterwards instead.
+
+### How rooms relate
+
+`continuity.topology` decides whether a venue is several dreams or one:
+
+| mode | transcripts | video | cost |
+|---|---|---|---|
+| `independent` | per room | per room | N streams |
+| `commons` | one pool, party-wide | per room | N streams |
+| `mirror` | one pool, party-wide | one loop everywhere | **1 stream** |
+
+`commons` is the "larger organism" setting: the kitchen and the dance floor
+both dream the whole party while still looking different. `mirror` puts the
+same loop on every wall, each screen at its own phase offset so the room is in
+step without being identical.
+
 ## Three ways to run it
 
 The backend ladder is ordered: the first rung that is healthy, affordable, and
@@ -203,6 +239,12 @@ This is the part of the system with the least room for interpretation.
   budget is set. A zero-budget preset cannot reach any cloud, whatever is in
   your environment.
 - The feature bus that drives the shaders carries numbers only.
+- A phone acting as a microphone gates on the device: audio is sent only while
+  someone is speaking, so silence never leaves the handset. What is said
+  travels over the local network to the machine running Egregore, is
+  transcribed there, and is never stored or sent out of the building. This is
+  a real change from a single-machine party, where audio never left the
+  capturing machine at all — say so on the signage.
 
 What that looks like on real speech — *"put that down, smell this, it's
 basically the ocean… my grandmother used to keep shells like that in a bowl by

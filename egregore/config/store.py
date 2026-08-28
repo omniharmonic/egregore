@@ -55,6 +55,7 @@ RESTART_KEYS: frozenset[str] = frozenset({
     "generation.fallback",
     "generation.comfyui_url",
     "budget.total_usd",
+    "continuity.topology",
     "asr.engine",
     "serving.bind",
 })

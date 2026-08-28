@@ -197,6 +197,17 @@
   </section>
 
   <section class="panel" style="flex-basis: 100%;">
+    <h2>devices</h2>
+    <p class="hint" id="nodesHint">&nbsp;</p>
+    <table>
+      <thead><tr>
+        <th>device</th><th>room</th><th>doing</th><th>level</th><th></th>
+      </tr></thead>
+      <tbody id="nodes"></tbody>
+    </table>
+  </section>
+
+  <section class="panel" style="flex-basis: 100%;">
     <h2>zones and screens</h2>
     <p class="hint">
       Effects and audio routing reach the screens immediately — no reload, no
@@ -288,6 +299,7 @@
     mPrices: $('mPrices'), mAddPrice: $('mAddPrice'), mExtra: $('mExtra'),
     mSave: $('mSave'), mErr: $('mErr'),
     keysHint: $('keysHint'), zones: $('zones'), meter: $('meter'),
+    nodes: $('nodes'), nodesHint: $('nodesHint'),
     audioHint: $('audioHint')
   };
 
@@ -316,6 +328,10 @@
       min: 0, max: 1, step: 0.05 },
     { path: 'continuity.default_mode', label: 'continuity', type: 'select',
       options: ['mosaic', 'continuity'] },
+    { path: 'continuity.topology',     label: 'topology',   type: 'select',
+      options: ['independent', 'commons', 'mirror'],
+      note: 'independent: each room dreams itself · commons: one pool, a loop '
+          + 'per room · mirror: one pool, one loop everywhere' },
     { path: 'budget.total_usd',        label: 'budget $',   type: 'number',
       min: 0, step: 0.5 },
     { path: 'asr.engine',              label: 'asr',        type: 'select',
@@ -370,7 +386,7 @@
       var name = dig(state.settings.effective, 'party.name');
       el.party.textContent = name || 'egregore';
       renderSecrets(); renderSettings(); renderModels(); renderPrices();
-      renderZones(); renderAudio();
+      renderZones(); renderAudio(); renderNodes();
     }).catch(function (err) {
       if (err && err.locked) { el.join.hidden = false; el.joinPass.focus(); return; }
       el.link.textContent = 'no route to host';
@@ -544,6 +560,92 @@
       keys.length + (keys.length === 1 ? ' change saved' : ' changes saved') +
       ' — restart egregore to apply: ' + keys.join(', ');
   }
+
+  // ---- devices ----------------------------------------------------------
+  //
+  // Enrolling is open, so this list is where trust is actually managed: an
+  // operator can see every microphone in the building and cut any of them.
+
+  function renderNodes() {
+    fetch('/api/nodes', { credentials: 'same-origin', cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : { nodes: [] }; })
+      .then(function (body) { drawNodes(body.nodes || []); })
+      .catch(function () { /* leave the last list up */ });
+  }
+
+  function drawNodes(nodes) {
+    if (!nodes.length) {
+      el.nodesHint.className = 'hint';
+      el.nodesHint.textContent =
+        'No devices yet. Open http://' + location.host + ' on a phone to add one.';
+    } else {
+      var mics = nodes.filter(function (n) {
+        return n.role !== 'receive' && !n.muted;
+      }).length;
+      el.nodesHint.className = 'hint';
+      el.nodesHint.textContent =
+        nodes.length + ' device(s) · ' + mics + ' listening · anyone on '
+        + location.host + ' can join';
+    }
+
+    el.nodes.textContent = '';
+    nodes.forEach(function (n) {
+      var tr = document.createElement('tr');
+      if (n.muted) tr.style.opacity = '0.55';
+
+      function cell(text, cls) {
+        var td = document.createElement('td');
+        td.textContent = text;
+        if (cls) td.className = cls;
+        tr.appendChild(td);
+        return td;
+      }
+      cell(n.label, 't');
+      cell(n.zone);
+      cell(n.muted ? 'muted' : n.role, n.muted ? 'warn' : '');
+
+      var lvl = document.createElement('td');
+      var track = document.createElement('div');
+      track.className = 'track';
+      track.style.cssText = 'width:120px;height:9px;border:1px solid var(--dimmer);position:relative';
+      var fill = document.createElement('div');
+      fill.style.cssText = 'position:absolute;inset:0 auto 0 0;background:var(--accent);width:'
+        + Math.min(100, n.level * 400).toFixed(1) + '%';
+      if (n.role === 'receive') { fill.style.width = '0'; }
+      track.appendChild(fill);
+      lvl.appendChild(track);
+      tr.appendChild(lvl);
+
+      var actions = document.createElement('td');
+      if (n.role !== 'receive') {
+        var mute = document.createElement('button');
+        mute.type = 'button';
+        mute.textContent = n.muted ? 'unmute' : 'mute';
+        mute.addEventListener('click', function () {
+          fetch('/api/nodes/' + encodeURIComponent(n.id) + '/mute', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ on: !n.muted }),
+          }).then(renderNodes);
+        });
+        actions.appendChild(mute);
+      }
+      var kick = document.createElement('button');
+      kick.type = 'button'; kick.className = 'danger'; kick.textContent = 'remove';
+      kick.style.marginLeft = '6px';
+      kick.addEventListener('click', function () {
+        fetch('/api/nodes/' + encodeURIComponent(n.id), {
+          method: 'DELETE', credentials: 'same-origin',
+        }).then(renderNodes);
+      });
+      actions.appendChild(kick);
+      tr.appendChild(actions);
+
+      el.nodes.appendChild(tr);
+    });
+  }
+
+  setInterval(renderNodes, 2000);
 
   // ---- zones ------------------------------------------------------------
 
