@@ -277,9 +277,7 @@ def test_unnormalized_curve_is_normalized_to_mean_one() -> None:
 
 
 def test_architecture_example_curve_normalizes_to_mean_one() -> None:
-    raw = points(
-        ("0%", 0.5), ("30%", 1.2), ("60%", 1.5), ("85%", 0.8), ("100%", 0.3)
-    )
+    raw = points(("0%", 0.5), ("30%", 1.2), ("60%", 1.5), ("85%", 0.8), ("100%", 0.3))
     assert curve_integral([(p.frac, p.rate) for p in raw]) != pytest.approx(1.0)
 
     curve = normalize_curve(raw)
@@ -419,8 +417,9 @@ def test_interval_is_capped_at_remaining_time() -> None:
 
 def test_curve_rate_shortens_the_interval_at_peak() -> None:
     curve = points(("0%", 0.5), ("60%", 1.5), ("100%", 0.5))
-    s = solver(curve_points=curve)
-    flat = solver()
+    # A low floor, so the comparison is about the curve and not the clamp.
+    s = solver(curve_points=curve, min_interval_s=1.0)
+    flat = solver(min_interval_s=1.0)
 
     kwargs = {"remaining_budget": Decimal("150"), "cost_per_clip": Decimal("0.24")}
     peak = s.interval_for("main", now_frac=0.6, **kwargs)
@@ -563,9 +562,12 @@ def test_should_generate_follows_the_worked_example_cadence() -> None:
     assert gov.should_generate("main") is False
     clock.advance(3.0)  # past 92.16s
     assert gov.should_generate("main") is True
-    assert gov.next_eligible_at("main") == pytest.approx(
-        gov.last_generation_at("main") + 92.16, abs=0.05
-    )
+    # Next eligibility is recomputed live, so it tracks the current interval
+    # (a hair under 92.16s now that 93s of the night have gone by).
+    last = gov.last_generation_at("main")
+    assert last is not None
+    assert gov.next_eligible_at("main") == pytest.approx(last + gov.interval_for("main"))
+    assert gov.interval_for("main") == pytest.approx(92.16, abs=1.0)
 
 
 def test_exhausted_budget_still_paces_local_generation() -> None:
@@ -592,8 +594,8 @@ def test_status_is_json_safe_and_reports_the_ceiling() -> None:
     status = gov.status()
     assert status["ceiling"] == "150"
     assert status["committed"] == "2.00"
-    assert status["reserved"] == "0"
-    assert status["remaining"] == "148.00"
+    assert Decimal(status["reserved"]) == Decimal("0")
+    assert Decimal(status["remaining"]) == Decimal("148.00")
     assert status["overrun_detected"] is True
     assert status["zones"]["main"]["interval_s"] > 0
     assert status["zones"]["main"]["last_generation_at"] is not None

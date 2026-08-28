@@ -163,9 +163,7 @@ class Governor:
 
     # -- money --------------------------------------------------------------
 
-    def authorize(
-        self, zone: str, backend_name: str, max_plausible: Decimal
-    ) -> Reservation | None:
+    def authorize(self, zone: str, backend_name: str, max_plausible: Decimal) -> Reservation | None:
         """Hold ``max_plausible`` against the ceiling, or return ``None``.
 
         ``None`` means "not on the cloud's dime" -- route to the free backend.

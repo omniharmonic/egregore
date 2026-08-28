@@ -175,9 +175,7 @@ class SpendLedger:
         self._committed += actual
         if actual > reservation.amount:
             self._overrun_detected = True
-        return self._append(
-            "settle", reservation_id, actual, reservation.zone, reservation.backend
-        )
+        return self._append("settle", reservation_id, actual, reservation.zone, reservation.backend)
 
     def release(self, reservation_id: str) -> LedgerEntry:
         """Cancel a hold (generation failed, was refused, or never ran)."""
