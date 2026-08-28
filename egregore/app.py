@@ -440,6 +440,18 @@ class ZonePipeline:
             return
         self.ring.add(text)
 
+    def _publish_input_device(self) -> str | None:
+        """The device this zone actually opened, once it has one.
+
+        Read here rather than snapshotted at start-up: the stream opens
+        asynchronously, so at wiring time the name is always still None —
+        which is what the dashboard was showing.
+        """
+        name = getattr(self.mic_source, "device_name", None)
+        if name:
+            self.state.input_devices[self.zone] = name
+        return name
+
     # -- output wiring ------------------------------------------------------
 
     async def on_clip(self, clip: ClipRef) -> None:
@@ -601,7 +613,7 @@ class ZonePipeline:
             "bleeds": self.bleeds,
             "throttled": self.throttled,
             "discarded_fragments": self.discarded_fragments,
-            "input_device": getattr(self.mic_source, "device_name", None),
+            "input_device": self._publish_input_device(),
             **self.loom.status(),
         }
 
@@ -800,11 +812,6 @@ async def run_party(cfg: EgregoreConfig, *, ignore_settings: bool = False) -> No
         except ValueError as exc:      # a malformed frame is one node's bug
             log.warning("zone %s: bad ingest frame from a node (%s)", zone, exc)
             return None
-
-    for _zone, _pipe in pipelines.items():
-        name = getattr(_pipe.mic_source, "device_name", None)
-        if name:
-            state.input_devices[_zone] = name
 
     state.ingest_handler = _ingest
     state.settings_handler = _apply_settings
