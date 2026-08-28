@@ -328,15 +328,9 @@ async def run_party(cfg: EgregoreConfig) -> None:
     for p in pipelines.values():
         await p.run()
 
-    zones_qs = cfg.zones[0].id if cfg.zones else "main"
-    print(f"\n  EGREGORE — {cfg.party.name}")
-    print(f"  join:     http://<this-host>:{cfg.serving.port}/?zone={zones_qs}")
-    print(f"  status:   http://<this-host>:{cfg.serving.port}/api/status")
-    print(f"  password: {password if password else '(auth disabled — trusted LAN)'}")
-    mode = ("LOCAL — nothing derived from speech leaves this machine"
-            if cfg.budget.total_usd == 0 else
-            f"cloud-capable, hard ceiling ${cfg.budget.total_usd}")
-    print(f"  privacy:  {mode}\n")
+    from egregore.banner import print_banner
+
+    print_banner(cfg, password=password, backends=[b.name for b in ladder])
 
     try:
         await server.serve()
