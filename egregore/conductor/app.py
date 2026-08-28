@@ -249,6 +249,17 @@ def create_app(
             "screens_connected_by_zone": state.screens_connected_by_zone(),
         }
 
+    @app.post("/api/control/{action}", dependencies=[Depends(require_party)])
+    async def post_control(action: str, payload: dict | None = None) -> dict:
+        """Operator controls (freeze/mute/mode). The handler is bound by the
+        integration layer; a deployment without one exposes no controls."""
+        if state.control_handler is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no controls bound")
+        try:
+            return await state.control_handler(action, payload or {})
+        except ValueError as e:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
+
     @app.get("/api/config", dependencies=[Depends(require_party)])
     async def get_config(zone: str = Query(...), screen: str | None = Query(None)) -> dict:
         config = state.get_config(zone, screen)

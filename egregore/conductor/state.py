@@ -45,6 +45,9 @@ _MANIFEST_QUEUE_MAXSIZE = 8
 
 ClipResolver = Callable[[str], "Path | None"]
 StatusProvider = Callable[[], Awaitable[dict]]
+#: (action, payload) -> result dict. Raises ValueError for a bad action or
+#: payload; the route turns that into a 400.
+ControlHandler = Callable[[str, dict], Awaitable[dict]]
 
 
 def _drop_oldest_put(queue: asyncio.Queue, item: object) -> None:
@@ -89,10 +92,14 @@ class ConductorState:
         clip_resolver: ClipResolver,
         zone_config: dict[str, dict] | None = None,
         status_provider: StatusProvider | None = None,
+        control_handler: ControlHandler | None = None,
     ) -> None:
         self.clip_resolver = clip_resolver
         self.zone_config: dict[str, dict] = dict(zone_config or {})
         self.status_provider = status_provider
+        #: Operator control actions (freeze/mute/mode). Bound by the
+        #: integration layer; None means the deployment exposes no controls.
+        self.control_handler = control_handler
 
         self._manifests: dict[str, Manifest] = {}
         self._latest_frame: dict[str, FeatureFrame] = {}

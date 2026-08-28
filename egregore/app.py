@@ -27,8 +27,8 @@ from egregore.governor import Governor
 from egregore.listener import FixtureSource, MoodIntegrator, ZoneEvents
 from egregore.loom import ZoneLoom
 from egregore.scribe import RingBuffer, install_privacy_excepthook, make_transcriber
-from egregore.types import ClipRef, FeatureFrame, VideoBackend
-from egregore.weaver import Weaver, build_abstractor
+from egregore.types import ClipRef, FeatureFrame, ThemeObject, VideoBackend
+from egregore.weaver import Weaver, build_abstractor, synthesize_prompt
 
 log = logging.getLogger("egregore.app")
 
@@ -82,11 +82,33 @@ def cost_per_clip(cfg: EgregoreConfig, ladder: list[VideoBackend]) -> Decimal:
     return Decimal("0")
 
 
+class PartyBus:
+    """Party-wide shared state: the operator freeze flag (R-7) and the
+    cross-zone thematic pool that powers zone-to-zone bleed (L-7)."""
+
+    def __init__(self) -> None:
+        self.frozen = False
+        self._themes: list[tuple[str, ThemeObject]] = []  # (zone, theme)
+
+    def share_theme(self, zone: str, theme: ThemeObject) -> None:
+        self._themes.append((zone, theme))
+        del self._themes[:-30]
+
+    def borrow_theme(self, for_zone: str) -> ThemeObject | None:
+        """Most recent validated theme from any *other* zone."""
+        for zone, theme in reversed(self._themes):
+            if zone != for_zone:
+                return theme
+        return None
+
+
 class ZonePipeline:
     """Everything one zone owns. Construction wires; run() animates."""
 
     def __init__(self, zcfg: ZoneConfig, cfg: EgregoreConfig, *, forge: Forge,
-                 governor: Governor, state: ConductorState) -> None:
+                 governor: Governor, state: ConductorState,
+                 bus: PartyBus | None = None) -> None:
+        self.bus = bus or PartyBus()
         self.cfg = cfg
         self.zcfg = zcfg
         self.zone = zcfg.id
@@ -102,6 +124,7 @@ class ZonePipeline:
             self.zone, cfg.zone_mode(self.zone), cfg.continuity
         )
         self._frame_n = 0
+        self.bleeds = 0
         self._tasks: list[asyncio.Task] = []
         self._source = self._build_source(cfg)
 
@@ -172,11 +195,39 @@ class ZonePipeline:
         while True:
             await asyncio.sleep(1.0)
             try:
+                if self.bus.frozen:
+                    continue  # operator freeze: loop keeps playing, nothing new
                 if not self.governor.should_generate(self.zone):
                     continue
                 plan = self.loom.plan_next()
+                window = self.ring.snapshot()
+                borrowed: ThemeObject | None = None
+                if len(window.split()) < self.weaver.min_window_tokens:
+                    # Zone-to-zone bleed (L-7): a quiet or dead zone dreams
+                    # on a neighbouring zone's most recent validated theme.
+                    borrowed = self.bus.borrow_theme(self.zone)
+                if borrowed is not None:
+                    prompt = synthesize_prompt(
+                        borrowed,
+                        cfg.aesthetic.grammar,
+                        self.loom.continuity_context(),
+                        cfg.aesthetic.drift,
+                        self.mood.state(),
+                    )
+                    self.bleeds += 1
+                    self.governor.record_generation(self.zone)
+                    await self.forge.request(
+                        zone=self.zone,
+                        prompt=prompt,
+                        duration_s=cfg.generation.clip_duration_s,
+                        tier=cfg.generation.model,
+                        theme_hint=borrowed,
+                        seed_image=plan.seed_image,
+                        extend_from=plan.use_extend,
+                    )
+                    continue
                 result = await self.weaver.weave(
-                    self.ring.snapshot(),
+                    window,
                     grammar=cfg.aesthetic.grammar,
                     drift=cfg.aesthetic.drift,
                     mood=self.mood.state(),
@@ -201,6 +252,7 @@ class ZonePipeline:
                 if result.theme is not None and not result.fallback:
                     self.mood.absorb_theme(result.theme)
                     self.loom.remember_theme(result.theme)
+                    self.bus.share_theme(self.zone, result.theme)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -236,6 +288,7 @@ class ZonePipeline:
             "prompts_sent": self.weaver.prompts_synthesized,
             "validator_rejections": self.weaver.rejections,
             "purges": self.weaver.purges_requested,
+            "bleeds": self.bleeds,
             **self.loom.status(),
         }
 
@@ -259,6 +312,36 @@ def _zone_config_map(cfg: EgregoreConfig) -> dict[str, dict]:
     return out
 
 
+def make_control_handler(
+    bus: PartyBus, pipelines: dict[str, ZonePipeline], state: ConductorState
+):
+    """Operator controls: freeze (R-7), per-zone mute (P-6), live mode
+    switch (C-4). Raises ValueError on bad input; the route 400s it."""
+
+    async def control_handler(action: str, payload: dict) -> dict:
+        if action == "freeze":
+            bus.frozen = bool(payload.get("on", True))
+            log.warning("operator control: freeze=%s", bus.frozen)
+            return {"frozen": bus.frozen}
+        zone = payload.get("zone")
+        pipe = pipelines.get(zone or "")
+        if pipe is None:
+            raise ValueError(f"unknown zone {zone!r}")
+        if action == "mute":
+            pipe.set_muted(bool(payload.get("on", True)))
+            return {"zone": zone, "muted": pipe.muted}
+        if action == "mode":
+            mode = payload.get("mode")
+            if mode not in ("mosaic", "continuity"):
+                raise ValueError(f"mode must be mosaic|continuity, got {mode!r}")
+            pipe.loom.set_mode(mode)
+            state.set_manifest(zone, pipe.loom.manifest())
+            return {"zone": zone, "mode": mode}
+        raise ValueError(f"unknown action {action!r}")
+
+    return control_handler
+
+
 async def run_party(cfg: EgregoreConfig) -> None:
     install_privacy_excepthook()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -270,6 +353,7 @@ async def run_party(cfg: EgregoreConfig) -> None:
     )
 
     pipelines: dict[str, ZonePipeline] = {}
+    bus = PartyBus()
 
     async def authorize(backend_name: str, amount: Decimal):
         return governor.authorize("party", backend_name, amount)
@@ -291,6 +375,7 @@ async def run_party(cfg: EgregoreConfig) -> None:
     async def status_provider() -> dict:
         return {
             "party": cfg.party.name,
+            "frozen": bus.frozen,
             "governor": governor.status(),
             "zones": {z: p.status() for z, p in pipelines.items()},
             "backends": [b.name for b in ladder],
@@ -307,6 +392,7 @@ async def run_party(cfg: EgregoreConfig) -> None:
         zone_config=_zone_config_map(cfg),
         status_provider=status_provider,
     )
+    state.control_handler = make_control_handler(bus, pipelines, state)
 
     password = os.environ.get(cfg.serving.password_env) or None
     if password is None and cfg.serving.public_tunnel:
@@ -315,7 +401,9 @@ async def run_party(cfg: EgregoreConfig) -> None:
     app = create_app(state, lens_dir=_LENS_DIR, password=password)
 
     for z in cfg.zones:
-        pipelines[z.id] = ZonePipeline(z, cfg, forge=forge, governor=governor, state=state)
+        pipelines[z.id] = ZonePipeline(
+            z, cfg, forge=forge, governor=governor, state=state, bus=bus
+        )
 
     import uvicorn
 
