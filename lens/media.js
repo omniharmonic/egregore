@@ -1,0 +1,355 @@
+// media.js — manifest, weighted scheduler, bounded clip cache, and the
+// two-<video> crossfade deck. Nothing in here is allowed to throw.
+
+const CACHE_NAME = 'egregore-clips';
+const LEDGER_KEY = 'egregore-clip-ledger';
+const PIN_NEW = 5, PIN_OLD = 3;   // guaranteed floor: newest N + oldest M
+
+/** Deterministic PRNG so a screen's sequence is a stable function of its phase. */
+export function mulberry32(a) {
+  a = (a >>> 0) || 1;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const jsonHeaders = { 'accept': 'application/json' };
+
+/** fetch that resolves to null instead of throwing; 401 raises the veil. */
+export async function safeJson(url, onAuth) {
+  try {
+    const r = await fetch(url, { credentials: 'same-origin', headers: jsonHeaders });
+    if (r.status === 401 || r.status === 403) { onAuth && onAuth(); return null; }
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+// ---------------------------------------------------------------------------
+// Bounded Cache API store + localStorage ledger
+// ---------------------------------------------------------------------------
+
+export class ClipCache {
+  constructor(budgetBytes) {
+    this.budget = budgetBytes;
+    this.ok = typeof caches !== 'undefined' && !!caches;
+    this.ledger = this._read();
+    this.inflight = new Set();
+  }
+
+  _read() {
+    try {
+      const raw = localStorage.getItem(LEDGER_KEY);
+      const l = raw ? JSON.parse(raw) : null;
+      if (l && l.items && typeof l.items === 'object') return l;
+    } catch { /* corrupt or unavailable: start clean */ }
+    return { v: 1, seq: 0, items: {} };
+  }
+
+  _write() {
+    try { localStorage.setItem(LEDGER_KEY, JSON.stringify(this.ledger)); } catch { /* quota */ }
+  }
+
+  get bytes() {
+    let t = 0;
+    for (const k in this.ledger.items) t += this.ledger.items[k].size || 0;
+    return t;
+  }
+
+  touch(id) {
+    const it = this.ledger.items[id];
+    if (it) { it.lastPlayed = Date.now(); this._write(); }
+  }
+
+  async open() {
+    if (!this.ok) return null;
+    try { return await caches.open(CACHE_NAME); } catch { this.ok = false; return null; }
+  }
+
+  /** Download-and-store, idempotent. Silent on every failure. */
+  async warm(id, url) {
+    if (!this.ok || this.inflight.has(id)) return;
+    this.inflight.add(id);
+    try {
+      const c = await this.open();
+      if (!c) return;
+      if (this.ledger.items[id] && await c.match(url)) return;
+      const r = await fetch(url, { credentials: 'same-origin' });
+      if (!r.ok) return;
+      const blob = await r.blob();
+      if (!blob.size) return;
+      await c.put(url, new Response(blob, {
+        headers: { 'content-type': blob.type || 'video/mp4' },
+      }));
+      // Store the URL rather than reconstructing `/clips/<id>.mp4` at eviction
+      // time: the ledger must be able to delete exactly what it put in, even
+      // if the manifest ever hands out a different URL shape.
+      this.ledger.items[id] = {
+        url, size: blob.size, added: ++this.ledger.seq, lastPlayed: Date.now(),
+      };
+      this._write();
+      await this.evict();
+    } catch { /* offline, quota, opaque — all fine, we just do not cache */ }
+    finally { this.inflight.delete(id); }
+  }
+
+  /** Object URL for a cached clip, or null. Caller revokes. */
+  async objectUrl(url) {
+    try {
+      const c = await this.open();
+      if (!c) return null;
+      const m = await c.match(url);
+      if (!m) return null;
+      return URL.createObjectURL(await m.blob());
+    } catch { return null; }
+  }
+
+  async evict() {
+    if (this.bytes <= this.budget) return;
+    const ids = Object.keys(this.ledger.items);
+    if (ids.length <= PIN_NEW + PIN_OLD) return;
+    const byAdded = ids.slice().sort((a, b) => this.ledger.items[a].added - this.ledger.items[b].added);
+    const pinned = new Set([...byAdded.slice(0, PIN_OLD), ...byAdded.slice(-PIN_NEW)]);
+    const victims = ids.filter((i) => !pinned.has(i))
+      .sort((a, b) => (this.ledger.items[a].lastPlayed || 0) - (this.ledger.items[b].lastPlayed || 0));
+    const c = await this.open();
+    for (const id of victims) {
+      if (this.bytes <= this.budget) break;
+      const u = this.ledger.items[id].url || `/clips/${id}.mp4`;
+      try { if (c) await c.delete(u); } catch { /* ignore */ }
+      delete this.ledger.items[id];
+    }
+    this._write();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Manifest + weighted scheduler
+// ---------------------------------------------------------------------------
+
+export class Playlist {
+  constructor(zone, phase, onAuth) {
+    this.zone = zone;
+    this.phase = phase;
+    this.onAuth = onAuth;
+    this.entries = [];
+    this.revision = -1;
+    this.crossfade = 2;
+    // A per-screen crossfade from /api/config is more specific than the
+    // zone-wide one in the manifest, so it must not be clobbered on refresh.
+    this.crossfadePinned = false;
+    this.recent = [];
+    this.rng = mulberry32(Math.round((phase % 1) * 1e6) ^ 0x5eed);
+    this.cursor = 0;
+    this.ok = false;
+  }
+
+  async refresh() {
+    const m = await safeJson(`/api/manifest?zone=${encodeURIComponent(this.zone)}`, this.onAuth);
+    if (!m || !Array.isArray(m.entries)) return false;
+    const entries = m.entries.filter((e) => e && typeof e.url === 'string' && e.url).map((e) => ({
+      clip_id: String(e.clip_id != null ? e.clip_id : e.url),
+      url: e.url,
+      duration_s: Number(e.duration_s) > 0 ? Number(e.duration_s) : 8,
+      weight: Number(e.weight) > 0 ? Number(e.weight) : 1,
+      movement_id: e.movement_id != null ? String(e.movement_id) : null,
+    }));
+    if (!entries.length) return false;
+    if (!this.crossfadePinned && typeof m.crossfade_s === 'number' && m.crossfade_s > 0) {
+      this.crossfade = m.crossfade_s;
+    }
+    if (this.revision < 0) {
+      // Start each screen at a different point in the pool (VIS-5).
+      this.cursor = Math.floor((this.phase % 1) * entries.length) % entries.length;
+    }
+    this.entries = entries;
+    this.revision = typeof m.revision === 'number' ? m.revision : this.revision + 1;
+    this.ok = true;
+    return true;
+  }
+
+  /** Weighted pick, avoiding an immediate repeat once the pool is big enough. */
+  pick() {
+    const pool = this.entries;
+    if (!pool.length) return null;
+    if (pool.length === 1) return pool[0];
+
+    if (this.cursor > 0) {                 // first pick honours the phase offset
+      const e = pool[this.cursor % pool.length];
+      this.cursor = 0;
+      this._remember(e);
+      return e;
+    }
+    const avoid = pool.length > 3 ? this.recent[this.recent.length - 1] : null;
+    const usable = avoid ? pool.filter((e) => e.clip_id !== avoid) : pool;
+    const list = usable.length ? usable : pool;
+
+    let total = 0;
+    for (const e of list) total += e.weight;
+    let r = this.rng() * total;
+    let chosen = list[list.length - 1];
+    for (const e of list) { r -= e.weight; if (r <= 0) { chosen = e; break; } }
+    this._remember(chosen);
+    return chosen;
+  }
+
+  _remember(e) {
+    this.recent.push(e.clip_id);
+    if (this.recent.length > 4) this.recent.shift();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Two-video crossfade deck
+// ---------------------------------------------------------------------------
+
+export class Deck {
+  /** @param {HTMLVideoElement[]} videos exactly two */
+  constructor(videos, playlist, cache) {
+    this.v = videos;
+    this.pl = playlist;
+    this.cache = cache;
+    this.active = 0;       // slot currently on screen
+    this.mix = 0;          // 0 = slot 0, 1 = slot 1
+    this.fading = false;
+    this.armed = false;    // idle slot holds a loaded next clip
+    this.clipId = ['', ''];
+    this.objUrl = [null, null];
+    this._entry = [null, null];
+    this._pending = false;
+    this.offline = false;
+    this.failures = 0;
+
+    for (let i = 0; i < 2; i++) {
+      const el = this.v[i];
+      el.muted = true; el.loop = true; el.playsInline = true;
+      el.setAttribute('playsinline', ''); el.setAttribute('muted', '');
+      el.preload = 'auto'; el.crossOrigin = 'anonymous';
+      el.addEventListener('error', () => this._onError(i));
+      el.addEventListener('stalled', () => this._kick(el));
+      el.addEventListener('loadeddata', () => { if (i !== this.active) this.armed = true; });
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) this.resync();
+    });
+  }
+
+  get crossfade() {
+    const d = this._dur(this.active);
+    return Math.max(0.2, Math.min(this.pl.crossfade || 2, d * 0.45));
+  }
+
+  _dur(i) {
+    const el = this.v[i];
+    if (Number.isFinite(el.duration) && el.duration > 0.2) return el.duration;
+    const e = this._entry[i];
+    return (e && e.duration_s) || 8;
+  }
+
+  async _load(slot, entry) {
+    if (!entry) return false;
+    this._entry[slot] = entry;
+    this.clipId[slot] = entry.clip_id;
+    const el = this.v[slot];
+
+    let src = entry.url;
+    if (this.offline) {
+      const o = await this.cache.objectUrl(entry.url);
+      if (o) src = o;
+    }
+    if (this.objUrl[slot]) { try { URL.revokeObjectURL(this.objUrl[slot]); } catch { /* */ } }
+    this.objUrl[slot] = src.startsWith('blob:') ? src : null;
+
+    try {
+      el.src = src;
+      el.load();
+      const p = el.play();
+      if (p && p.catch) p.catch(() => { /* autoplay policy; muted should be fine */ });
+    } catch { return false; }
+    // Warm the bounded cache in the background; never blocks playback.
+    this.cache.warm(entry.clip_id, entry.url);
+    return true;
+  }
+
+  /** Bring up the first clip. Safe to call repeatedly. */
+  async begin() {
+    const e = this.pl.pick();
+    if (!e) return false;
+    this.active = 0; this.mix = 0; this.fading = false; this.armed = false;
+    return this._load(0, e);
+  }
+
+  async _onError(slot) {
+    this.failures++;
+    // First try the local cache for this exact clip; then move on to another.
+    const entry = this._entry && this._entry[slot];
+    if (entry && !this.offline) {
+      this.offline = true;
+      const o = await this.cache.objectUrl(entry.url);
+      if (o) { this._load(slot, entry); return; }
+    }
+    const next = this.pl.pick();
+    if (next) this._load(slot, next);
+  }
+
+  _kick(el) {
+    if (el.paused) { const p = el.play(); if (p && p.catch) p.catch(() => {}); }
+  }
+
+  resync() {
+    for (const el of this.v) this._kick(el);
+  }
+
+  ready(slot) {
+    const el = this.v[slot];
+    return el.readyState >= 3 && el.videoWidth > 0;
+  }
+
+  size(slot) {
+    const el = this.v[slot];
+    return [el.videoWidth || 0, el.videoHeight || 0];
+  }
+
+  /** Advance the scheduler + the mix ramp. */
+  tick(dt) {
+    const a = this.active, b = 1 - this.active;
+    const cur = this.v[a];
+    const xf = this.crossfade;
+
+    if (this.fading) {
+      const dir = b === 1 ? 1 : -1;
+      this.mix = Math.max(0, Math.min(1, this.mix + dir * (dt / xf)));
+      if ((dir > 0 && this.mix >= 1) || (dir < 0 && this.mix <= 0)) {
+        this.fading = false;
+        this.active = b;
+        this.armed = false;
+        this._pending = false;
+        this.cache.touch(this.clipId[b]);   // recency drives cache eviction
+      }
+      return;
+    }
+
+    if (!Number.isFinite(cur.duration) || cur.duration <= 0) return;
+    const t = cur.currentTime;
+    const dur = this._dur(a);
+    const lead = Math.min(3.5, dur * 0.35);
+
+    if (!this._pending && t >= dur - xf - lead) {
+      this._pending = true;
+      const e = this.pl.pick();
+      if (e) this._load(b, e); else this._pending = false;
+    }
+
+    if (this._pending && t >= dur - xf) {
+      if (this.ready(b)) {
+        this._kick(this.v[b]);
+        this.fading = true;
+      }
+      // Not ready: `loop` keeps the current clip running, and we try again on
+      // its next pass. There is never a black frame.
+    }
+  }
+}
