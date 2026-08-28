@@ -19,6 +19,13 @@ from egregore.types import ClipRef, ManifestEntry
 
 __all__ = ["WeightedPlaylist"]
 
+#: Relative on-screen worth by backend. A procedural fill is connective
+#: tissue between diffusion clips, not a peer of them: it is generated far
+#: more often, so equal weighting would let it crowd out the material the
+#: party is actually paying for.
+DEFAULT_BACKEND_WEIGHTS: dict[str, float] = {"procedural": 0.3, "mock": 0.3}
+
+
 
 class WeightedPlaylist:
     """Recency-weighted pool of clips for one zone's mosaic playlist.
@@ -46,6 +53,7 @@ class WeightedPlaylist:
         floor_weight: float = 0.15,
         active_pool_max: int = 200,
         archive_rate: float = 0.05,
+        backend_weights: dict[str, float] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         if half_life_min <= 0:
@@ -60,6 +68,13 @@ class WeightedPlaylist:
         self.floor_weight = float(floor_weight)
         self.active_pool_max = int(active_pool_max)
         self.archive_rate = float(archive_rate)
+        # What a clip is worth on screen depends on where it came from, not
+        # only on when it arrived. Procedural fills exist to keep the loop
+        # continuous between diffusion clips; weighting them the same makes
+        # them dominate, because they are always the newest thing in the pool.
+        self.backend_weights = dict(
+            backend_weights if backend_weights is not None else DEFAULT_BACKEND_WEIGHTS
+        )
         self._clock = clock
         # Plain dicts preserve insertion order (oldest first), which is what
         # we need to evict the oldest active clip into the archive tier.
@@ -99,8 +114,14 @@ class WeightedPlaylist:
         raw = 2.0 ** (-age_minutes / self.half_life_min)
         return max(self.floor_weight, raw)
 
+    def backend_weight(self, clip: ClipRef) -> float:
+        """How much this clip's provenance is worth, relative to a diffusion
+        clip at 1.0. Unknown backends are worth full weight — a new backend
+        should not be quietly demoted."""
+        return float(self.backend_weights.get(clip.backend, 1.0))
+
     def _effective_weight(self, clip: ClipRef) -> float:
-        w = self.weight(clip)
+        w = self.weight(clip) * self.backend_weight(clip)
         if clip.id in self._archive:
             w *= self.archive_rate
         return w

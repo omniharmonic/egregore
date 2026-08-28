@@ -219,10 +219,14 @@ class LiveSettings:
     resolution: str
     drift: float
     cadence_floor_s: float | None = None
-    #: Longest the loop may go without a new clip. When the budget cadence is
-    #: slower than this, the free renderer fills the gap so the pool keeps
-    #: growing and the loop stays continuous. None disables filling.
+    #: Longest the loop may go without a new clip while the pool is still
+    #: thin. Filling is not a steady drip: the free renderer exists to get a
+    #: loop off the ground and to cover a gap, not to become the material.
     fill_interval_s: float | None = 45.0
+    #: Stop filling once the pool holds this many clips. Past it the loop has
+    #: enough to work with, and every further fill would only dilute the
+    #: diffusion clips the party is paying for.
+    fill_pool_floor: int = 6
 
     @classmethod
     def from_config(cls, cfg: EgregoreConfig) -> LiveSettings:
@@ -251,6 +255,9 @@ class LiveSettings:
         if "drift" in aes:
             self.drift = float(aes["drift"])
             changed.append("aesthetic.drift")
+        if "fill_pool_floor" in overrides:
+            self.fill_pool_floor = int(overrides["fill_pool_floor"])
+            changed.append("fill_pool_floor")
         if "fill_interval_s" in overrides:
             raw = overrides["fill_interval_s"]
             self.fill_interval_s = float(raw) if raw else None
@@ -449,11 +456,17 @@ class ZonePipeline:
                 fill = False
                 if not due:
                     gap = self.live.fill_interval_s
-                    if gap and (time.monotonic() - self._last_clip_request) >= gap:
+                    thin = self.loom.playlist.active_size < self.live.fill_pool_floor
+                    if gap and thin and (
+                        time.monotonic() - self._last_clip_request
+                    ) >= gap:
                         # The budget cadence can be minutes apart on a paid
-                        # backend. Left alone the loom has one or two clips to
-                        # work with, which reads as a stuttering loop rather
-                        # than a dream. Fill the gap on the free renderer.
+                        # backend, and a loom with one clip reads as a stutter
+                        # rather than a dream. So fill — but only while the
+                        # pool is thin. Filling on a timer forever buries the
+                        # diffusion clips under connective tissue, which is
+                        # what "it spent real money and looks procedural"
+                        # actually means.
                         fill = True
                 if not due and not fill:
                     continue

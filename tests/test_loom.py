@@ -380,3 +380,40 @@ def test_recall_motifs_caps_k_to_pool_size():
     loom.remember_theme(make_theme("ambient", "drift", [], ["only-one"]))
     result = loom.recall_motifs(k=5, rng=random.Random(0))
     assert result == ["only-one"]
+
+
+# ---------------------------------------------------------------------------
+# Provenance weighting — fills are connective tissue, not peers
+# ---------------------------------------------------------------------------
+
+
+def test_a_procedural_fill_is_worth_less_on_screen_than_a_diffusion_clip():
+    """Fills are generated far more often than paid clips, so equal weighting
+    lets them crowd out the material a party is actually paying for — which
+    on screen reads as "it spent real money and looks procedural"."""
+    from egregore.loom.playlist import WeightedPlaylist
+
+    pl = WeightedPlaylist(half_life_min=45.0, clock=lambda: 1000.0)
+    fill = ClipRef(id="a" * 16, path=Path("/tmp/a.mp4"), duration_s=6.0,
+                   zone="main", backend="procedural", tier="mock",
+                   created_at=1000.0)
+    rich = ClipRef(id="b" * 16, path=Path("/tmp/b.mp4"), duration_s=6.0,
+                   zone="main", backend="fal", tier="minimax-h3-max",
+                   created_at=1000.0)
+    pl.add(fill)
+    pl.add(rich)
+
+    # Same age, so only provenance separates them.
+    weights = {e.clip_id: e.weight for e in pl.entries()}
+    assert weights[rich.id] > weights[fill.id] * 2
+
+
+def test_an_unknown_backend_keeps_full_weight():
+    # A backend we have not met should not be quietly demoted.
+    from egregore.loom.playlist import WeightedPlaylist
+
+    pl = WeightedPlaylist(clock=lambda: 1000.0)
+    clip = ClipRef(id="c" * 16, path=Path("/tmp/c.mp4"), duration_s=6.0,
+                   zone="main", backend="some-new-vendor", tier="x",
+                   created_at=1000.0)
+    assert pl.backend_weight(clip) == 1.0
