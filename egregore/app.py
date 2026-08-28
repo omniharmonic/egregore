@@ -372,13 +372,33 @@ async def run_party(cfg: EgregoreConfig) -> None:
     forge = Forge(ladder, store, authorize=authorize, settle=settle,
                   release=release, on_clip=on_clip)
 
+    health_cache: dict = {"at": 0.0, "rows": []}
+
+    async def backend_rows() -> list[dict]:
+        # Backend health for the dashboard, cached so a 2s status poll
+        # doesn't hammer remote health endpoints.
+        import time as _time
+
+        now = _time.monotonic()
+        if now - health_cache["at"] > 15.0:
+            rows = []
+            for b in ladder:
+                try:
+                    h = await b.health()
+                    rows.append({"name": b.name, "state": h.status.value})
+                except Exception:
+                    rows.append({"name": b.name, "state": "down"})
+            health_cache["rows"] = rows
+            health_cache["at"] = now
+        return health_cache["rows"]
+
     async def status_provider() -> dict:
         return {
             "party": cfg.party.name,
             "frozen": bus.frozen,
             "governor": governor.status(),
             "zones": {z: p.status() for z, p in pipelines.items()},
-            "backends": [b.name for b in ladder],
+            "backends": await backend_rows(),
             "privacy": {
                 "retained": "nothing",
                 "transcripts_on_disk": 0,
