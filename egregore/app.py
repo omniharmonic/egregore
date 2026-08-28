@@ -19,10 +19,12 @@ import logging
 import os
 import secrets
 from collections.abc import Callable
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
 from egregore.conductor import ConductorState, create_app
+from egregore.config import store as config_store
 from egregore.config.schema import EgregoreConfig, ZoneConfig
 from egregore.forge import (
     ClipStore,
@@ -141,7 +143,7 @@ _MAX_QUEUE_DEPTH = int(os.environ.get("EGREGORE_MAX_QUEUE_DEPTH", "3"))
 
 
 def _throughput_floor(
-    cfg: EgregoreConfig, ladder: list[VideoBackend]
+    cfg: EgregoreConfig, ladder: list[VideoBackend], live: LiveSettings | None = None
 ) -> Callable[[], float] | None:
     """A probe the Governor calls to learn how fast the hardware can go.
 
@@ -165,6 +167,10 @@ def _throughput_floor(
     preferred, tier = ladder[0], cfg.generation.model
 
     def probe() -> float:
+        # An operator-set floor wins over what the backend reports, so a
+        # cadence can be pinned from the settings page without a restart.
+        if live is not None and live.cadence_floor_s:
+            return live.cadence_floor_s
         try:
             return preferred.estimated_latency(tier).total_seconds()
         except Exception:
@@ -194,6 +200,55 @@ def cost_per_clip(cfg: EgregoreConfig, ladder: list[VideoBackend]) -> Decimal:
     return Decimal("0")
 
 
+@dataclass
+class LiveSettings:
+    """The subset of configuration a running party re-reads each cycle.
+
+    Everything here is read per generation, so changing it is an assignment
+    rather than a reconstruction. Anything that would rebuild the backend
+    ladder, or move a ceiling that reservations are already held against,
+    belongs in ``store.RESTART_KEYS`` instead — see the configuration spec.
+    """
+
+    clip_duration_s: int
+    resolution: str
+    drift: float
+    cadence_floor_s: float | None = None
+
+    @classmethod
+    def from_config(cls, cfg: EgregoreConfig) -> LiveSettings:
+        return cls(
+            clip_duration_s=cfg.generation.clip_duration_s,
+            resolution=cfg.generation.resolution,
+            drift=cfg.aesthetic.drift,
+        )
+
+    def apply(self, overrides: dict) -> list[str]:
+        """Apply only the live keys present in ``overrides``; return what changed.
+
+        Restart-only keys in the same payload are ignored here on purpose:
+        the endpoint has already persisted them for the next run, and acting
+        on them now is exactly what the live/restart split exists to prevent.
+        """
+        changed: list[str] = []
+        gen = overrides.get("generation") or {}
+        if "clip_duration_s" in gen:
+            self.clip_duration_s = int(gen["clip_duration_s"])
+            changed.append("generation.clip_duration_s")
+        if "resolution" in gen:
+            self.resolution = str(gen["resolution"])
+            changed.append("generation.resolution")
+        aes = overrides.get("aesthetic") or {}
+        if "drift" in aes:
+            self.drift = float(aes["drift"])
+            changed.append("aesthetic.drift")
+        if "cadence_floor_s" in overrides:
+            raw = overrides["cadence_floor_s"]
+            self.cadence_floor_s = float(raw) if raw else None
+            changed.append("cadence_floor_s")
+        return changed
+
+
 class PartyBus:
     """Party-wide shared state: the operator freeze flag (R-7) and the
     cross-zone thematic pool that powers zone-to-zone bleed (L-7)."""
@@ -219,9 +274,12 @@ class ZonePipeline:
 
     def __init__(self, zcfg: ZoneConfig, cfg: EgregoreConfig, *, forge: Forge,
                  governor: Governor, state: ConductorState,
-                 bus: PartyBus | None = None) -> None:
+                 bus: PartyBus | None = None,
+                 live: LiveSettings | None = None) -> None:
         self.bus = bus or PartyBus()
         self.cfg = cfg
+        # Read per cycle, so a settings change lands on the next clip.
+        self.live = live if live is not None else LiveSettings.from_config(cfg)
         self.zcfg = zcfg
         self.zone = zcfg.id
         self.forge = forge
@@ -332,7 +390,7 @@ class ZonePipeline:
                         borrowed,
                         cfg.aesthetic.grammar,
                         self.loom.continuity_context(),
-                        cfg.aesthetic.drift,
+                        self.live.drift,
                         self.mood.state(),
                     )
                     self.bleeds += 1
@@ -340,7 +398,7 @@ class ZonePipeline:
                     await self.forge.request(
                         zone=self.zone,
                         prompt=prompt,
-                        duration_s=cfg.generation.clip_duration_s,
+                        duration_s=self.live.clip_duration_s,
                         tier=cfg.generation.model,
                         theme_hint=borrowed,
                         seed_image=plan.seed_image,
@@ -350,7 +408,7 @@ class ZonePipeline:
                 result = await self.weaver.weave(
                     window,
                     grammar=cfg.aesthetic.grammar,
-                    drift=cfg.aesthetic.drift,
+                    drift=self.live.drift,
                     mood=self.mood.state(),
                     continuity=self.loom.continuity_context(),
                 )
@@ -364,7 +422,7 @@ class ZonePipeline:
                 await self.forge.request(
                     zone=self.zone,
                     prompt=result.prompt,
-                    duration_s=cfg.generation.clip_duration_s,
+                    duration_s=self.live.clip_duration_s,
                     tier=cfg.generation.model,
                     theme_hint=result.theme,
                     seed_image=plan.seed_image,
@@ -468,13 +526,26 @@ async def run_party(cfg: EgregoreConfig) -> None:
     install_privacy_excepthook()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 
+    # Secrets first, so a key saved by `egregore setup` is visible to
+    # build_ladder; then the settings overlay, so the ladder is built from
+    # what the operator last chose rather than only from the preset.
+    config_store.load_env_file()
+    overrides = config_store.load_settings()
+    if overrides:
+        try:
+            cfg = config_store.apply_overlay(cfg, overrides)
+            log.info("settings overlay applied from %s", config_store.settings_path())
+        except (ValueError, TypeError) as exc:
+            log.warning("ignoring invalid settings overlay (%s); using the preset", exc)
+    live = LiveSettings.from_config(cfg)
+
     store = ClipStore(Path(cfg.clip_store_dir))
     ladder = build_ladder(cfg, store)
     governor = Governor.from_config(
         cfg,
         cost_per_clip=cost_per_clip(cfg, ladder),
         min_interval_s=60.0,
-        throughput_floor_s=_throughput_floor(cfg, ladder),
+        throughput_floor_s=_throughput_floor(cfg, ladder, live),
     )
 
     pipelines: dict[str, ZonePipeline] = {}
@@ -543,11 +614,19 @@ async def run_party(cfg: EgregoreConfig) -> None:
     if password is None and cfg.serving.public_tunnel:
         password = secrets.token_urlsafe(9)
 
+    def _apply_settings(payload: dict) -> dict:
+        changed = live.apply(payload)
+        log.info("live settings changed: %s", ", ".join(changed) or "nothing")
+        return {"applied": changed}
+
+    state.settings_handler = _apply_settings
+    state.effective_config = cfg.model_dump(mode="json")
+
     app = create_app(state, lens_dir=_LENS_DIR, password=password)
 
     for z in cfg.zones:
         pipelines[z.id] = ZonePipeline(
-            z, cfg, forge=forge, governor=governor, state=state, bus=bus
+            z, cfg, forge=forge, governor=governor, state=state, bus=bus, live=live
         )
 
     import uvicorn

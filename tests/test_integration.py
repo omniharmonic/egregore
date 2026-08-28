@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from egregore.app import PartyBus, ZonePipeline, make_control_handler
+from egregore.app import LiveSettings, PartyBus, ZonePipeline, make_control_handler
 from egregore.conductor import ConductorState
 from egregore.config.schema import EgregoreConfig
 from egregore.forge import ClipStore, Forge, MockBackend
@@ -88,14 +88,18 @@ class Party:
         self.forge = Forge(self.ladder, self.store, authorize=authorize,
                            settle=settle, release=release, on_clip=on_clip)
         self.state = ConductorState(clip_resolver=self.store.path_for)
+        self.live = LiveSettings.from_config(cfg)
         for z in cfg.zones:
             self.pipelines[z.id] = ZonePipeline(
                 z, cfg, forge=self.forge, governor=self.governor,
-                state=self.state, bus=self.bus,
+                state=self.state, bus=self.bus, live=self.live,
             )
         self.state.control_handler = make_control_handler(
             self.bus, self.pipelines, self.state
         )
+        self.state.settings_handler = lambda payload: {
+            "applied": self.live.apply(payload)
+        }
 
     async def __aenter__(self):
         self.governor.start()
@@ -261,3 +265,44 @@ async def test_mode_switch_control(tmp_path):
             await handler("mode", {"zone": "main", "mode": "sideways"})
         with pytest.raises(ValueError):
             await handler("mute", {"zone": "nowhere"})
+
+
+async def test_live_settings_change_the_next_clip_without_a_restart(tmp_path):
+    cfg = _cfg(tmp_path, zones=[{"id": "main", "mic": {"type": "fixture"}}], duration_s=2)
+    async with Party(cfg) as party:
+        await party.wait_clips(1)
+        handler = party.state.settings_handler
+        assert handler is not None, "the integration layer must bind a settings handler"
+        assert party.pipelines["main"].live.clip_duration_s == 2
+
+        result = handler({"generation": {"clip_duration_s": 6}, "aesthetic": {"drift": 0.9}})
+
+        assert set(result["applied"]) == {"generation.clip_duration_s", "aesthetic.drift"}
+        # The pipeline reads the same object, so the next cycle sees the change.
+        assert party.pipelines["main"].live.clip_duration_s == 6
+        assert party.pipelines["main"].live.drift == 0.9
+
+
+async def test_live_settings_ignore_a_restart_only_key(tmp_path):
+    cfg = _cfg(tmp_path, zones=[{"id": "main", "mic": {"type": "fixture"}}])
+    ceiling_before = None
+    async with Party(cfg, ceiling=Decimal("2.00")) as party:
+        ceiling_before = party.governor.ledger.ceiling
+        result = party.state.settings_handler(
+            {"budget": {"total_usd": 999}, "generation": {"backend": "fal"}}
+        )
+    # Moving the ceiling under reservations already held against it, or
+    # rebuilding the ladder mid-flight, is exactly what the restart group
+    # exists to prevent — the handler must decline both.
+    assert result["applied"] == []
+    assert ceiling_before == Decimal("2.00")
+
+
+async def test_cadence_floor_override_is_live(tmp_path):
+    cfg = _cfg(tmp_path, zones=[{"id": "main", "mic": {"type": "fixture"}}])
+    async with Party(cfg) as party:
+        assert party.live.cadence_floor_s is None
+        party.state.settings_handler({"cadence_floor_s": 45})
+        assert party.live.cadence_floor_s == 45.0
+        party.state.settings_handler({"cadence_floor_s": 0})
+        assert party.live.cadence_floor_s is None, "0 means 'use the backend's own estimate'"
