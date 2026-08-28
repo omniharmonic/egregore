@@ -286,6 +286,8 @@ class ZonePipeline:
         self.governor = governor
         self.state = state
         self.muted = False
+        #: Set when this zone's audio comes from enrolled browsers.
+        self.network_source = None
 
         self.ring = RingBuffer.from_config(self.zone, cfg.privacy)
         self.weaver = Weaver(build_abstractor(cfg.weaver))
@@ -323,6 +325,21 @@ class ZonePipeline:
                     self.zone, e,
                 )
                 return None
+        if mic.type == "network":
+            # Browsers enrolled as transmitters feed this over /ws/ingest. It
+            # owns no audio device, so unlike a usb mic it cannot fail to open
+            # — a zone with no phones in it yet is simply a quiet zone.
+            from egregore.listener import NetworkSource
+
+            try:
+                self._transcriber = make_transcriber(cfg.asr.engine, cfg.asr.language)
+            except (RuntimeError, ValueError) as e:
+                log.warning(
+                    "zone %s: no transcriber (%s); network audio will drive "
+                    "features only", self.zone, e,
+                )
+            self.network_source = NetworkSource(events, zone=self.zone)
+            return self.network_source
         log.warning(
             "zone %s: mic type %r not wired in v1; running on thematic memory",
             self.zone, mic.type,
@@ -619,6 +636,16 @@ async def run_party(cfg: EgregoreConfig) -> None:
         log.info("live settings changed: %s", ", ".join(changed) or "nothing")
         return {"applied": changed}
 
+    async def _ingest(zone: str, node_id: str, pcm: bytes, sample_rate: int) -> None:
+        pipe = pipelines.get(zone)
+        if pipe is None or pipe.network_source is None:
+            return
+        try:
+            await pipe.network_source.feed(node_id, pcm, sample_rate)
+        except ValueError as exc:      # a malformed frame is one node's bug
+            log.warning("zone %s: bad ingest frame from a node (%s)", zone, exc)
+
+    state.ingest_handler = _ingest
     state.settings_handler = _apply_settings
     state.effective_config = cfg.model_dump(mode="json")
 

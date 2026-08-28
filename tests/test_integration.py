@@ -306,3 +306,33 @@ async def test_cadence_floor_override_is_live(tmp_path):
         assert party.live.cadence_floor_s == 45.0
         party.state.settings_handler({"cadence_floor_s": 0})
         assert party.live.cadence_floor_s is None, "0 means 'use the backend's own estimate'"
+
+
+async def test_network_zone_transcribes_audio_that_arrived_over_the_wire(tmp_path):
+    import math
+    import struct
+
+    cfg = _cfg(tmp_path, zones=[{"id": "main", "mic": {"type": "network"}}])
+    async with Party(cfg) as party:
+        pipe = party.pipelines["main"]
+        assert pipe.network_source is not None, "a network zone needs a NetworkSource"
+
+        # Half a second of a loud tone in 50ms blocks, as a phone would send.
+        for _ in range(10):
+            block = bytearray()
+            for i in range(800):
+                block += struct.pack(
+                    "<h", int(0.6 * 32767 * math.sin(2 * math.pi * 220 * i / 16000)))
+            await pipe.network_source.feed("n1", bytes(block), 16000)
+
+        # Features reached the bus whether or not the gate heard speech in it.
+        assert party.state.latest_frame("main") is not None
+
+
+async def test_a_network_zone_with_no_phones_yet_is_simply_quiet(tmp_path):
+    # Unlike a usb mic, this source opens no device, so an empty room must
+    # start cleanly rather than falling back to thematic memory.
+    cfg = _cfg(tmp_path, zones=[{"id": "main", "mic": {"type": "network"}}])
+    async with Party(cfg) as party:
+        assert party.pipelines["main"].network_source is not None
+        assert party.state.latest_frame("main") is None
