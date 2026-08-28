@@ -64,7 +64,13 @@ def build_ladder(cfg: EgregoreConfig, store: ClipStore) -> list[VideoBackend]:
     if choice in ("local", "auto") or cfg.generation.fallback == "local":
         rungs.append(ComfyUIBackend(store, base_url=cfg.generation.comfyui_url))
     # The procedural renderer ("mock") is a real zero-cost backend, always last.
-    rungs.append(MockBackend(store, name="procedural"))
+    rungs.append(
+        MockBackend(
+            store,
+            name="procedural",
+            codec=os.environ.get("EGREGORE_PROCEDURAL_CODEC", "h264"),
+        )
+    )
     return rungs
 
 

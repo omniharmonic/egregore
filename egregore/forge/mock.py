@@ -345,6 +345,7 @@ def build_command(
     seed_image_path: Path | None = None,
     *,
     ffmpeg: str = "ffmpeg",
+    codec: str = "h264",
 ) -> list[str]:
     """Assemble the full ffmpeg argv for one clip.
 
@@ -395,9 +396,14 @@ def build_command(
         "-an",
         "-t", str(duration_s),
         "-r", str(FPS),
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-crf", "28",
+        *(
+            # VP9-in-mp4 for browsers without H.264 (headless test Chromium
+            # ships none); h264 stays the default for real screens.
+            ["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "34",
+             "-deadline", "realtime", "-cpu-used", "8", "-row-mt", "1"]
+            if codec == "vp9"
+            else ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "28"]
+        ),
         "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
         str(out_path),
@@ -420,6 +426,7 @@ class MockBackend:
         name: str = "mock",
         latency_s: float = 0.0,
         ffmpeg: str = "ffmpeg",
+        codec: str = "h264",
     ) -> None:
         self.name = name
         self.store = store
@@ -427,6 +434,7 @@ class MockBackend:
         #: to make a rung slow; operators can use it to rehearse failover.
         self.latency_s = latency_s
         self.ffmpeg = ffmpeg
+        self.codec = codec
         #: Test/operator switch: force `generate` to raise, exercising the
         #: ladder's failure path without needing a broken ffmpeg.
         self.fail = False
@@ -495,7 +503,7 @@ class MockBackend:
         started = time.monotonic()
         try:
             await self._run(
-                build_command(theme, duration_s, out_path, seed_path, ffmpeg=self.ffmpeg)
+                build_command(theme, duration_s, out_path, seed_path, ffmpeg=self.ffmpeg, codec=self.codec)
             )
             log.info(
                 "mock render backend=%s zone=%s variant=%s duration=%ds encode=%.2fs",
