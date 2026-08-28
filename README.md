@@ -42,6 +42,7 @@ starves regardless of GPUs, networks, or budgets.
 | Backend | Needs | Speed | Cost | Try it |
 |---|---|---|---|---|
 | `procedural` | ffmpeg | instant | free | `presets/demo.yaml` |
+| `procedural` + live mic | ffmpeg, a microphone | instant | free | `presets/live-mic.yaml` |
 | `local` | ComfyUI + a video model | ~1.5–5 min/clip | free | `presets/local-demo.yaml` |
 | `fal` | `FAL_KEY` | ~1–2 min/clip | ~$0.025/s | `presets/fal-demo.yaml` |
 | `veo` | `GEMINI_API_KEY` | ~1 min/clip | $0.05–0.60/s | `presets/house-party.yaml` |
@@ -64,10 +65,32 @@ cadence interval_s: 60.0 -> 106.232 # the Governor followed it
 If you want a fixed cadence instead, set **cadence floor** on the settings
 page (or `EGREGORE_MIN_CLIP_INTERVAL_S`).
 
+## Is it actually listening?
+
+Two different questions, and the settings page answers both.
+
+**Are the visuals audio-reactive?** Yes. Every effect shader reads the audio
+uniforms; freezing the video and changing only the audio numbers moves the
+render by a mean of 17 per pixel. The **audio** panel draws the live feature
+bus, so you can watch the numbers the shaders are actually being driven by.
+
+**Is it hearing *my* room?** Only if the zone's microphone is real. With
+`mic.type: fixture` — which is what every demo preset uses — the numbers are
+synthesised: a slow sine "music bed" with bursts around the scripted
+conversation. The panel says so in as many words. For a real room:
+
+```bash
+uv run egregore run presets/live-mic.yaml
+```
+
+That preset is real microphone plus real on-device transcription plus the
+instant procedural renderer, so nothing is waiting on a GPU or a key.
+
 ## Configuring it
 
 Start with the **settings page** at `/static/setup.html`. Everything except
-credentials can be changed there.
+credentials can be changed there, and the **keys** panel handles those too
+when you open the page on the machine running the party.
 
 Configuration resolves in three layers:
 
@@ -84,25 +107,52 @@ the UI. All runtime files live outside the repository.
 
 | Live — next clip | Restart — next run |
 |---|---|
-| clip duration | backend and fallback |
-| resolution | model selection |
-| drift | API keys |
-| continuity mode | budget ceiling |
-| cadence floor | zones and microphones |
-| freeze / mute | ComfyUI URL |
+| **video effects (lens stack)** | backend and fallback |
+| **audio routing per zone** | model selection |
+| clip duration | API keys |
+| resolution | budget ceiling |
+| drift | microphone and zones |
+| continuity mode | ComfyUI URL |
+| cadence floor | |
+| freeze / mute | |
 
 Backend choice and the budget ceiling are in the restart column deliberately:
 rebuilding the ladder with clips in flight, or moving a ceiling that
 reservations are already held against, both have real failure modes.
 
+### Video effects
+
+Ten lenses ship: `feedback`, `kaleidoscope`, `flow`, `chroma`, `bloom`,
+`liquid`, `glitch`, `pixelsort`, `crt`, `corrupt`. Tick them on the settings
+page and the screens change immediately — no reload, no restart. Order follows
+the order they are listed in.
+
+To tune one screen by hand without touching the room, append `?stack=` to its
+URL; that screen then ignores operator changes until it is reloaded:
+
+```
+http://localhost:8420/?zone=main&stack=kaleidoscope,chroma,bloom
+http://localhost:8420/?zone=main&stack=            # no effects at all
+```
+
+Each zone also chooses what its effects listen to: the room's microphone via
+the server feature bus (`zone`, the default), or that screen's own microphone
+captured in the browser (`local_mic`).
+
 ### Keys
 
-Credentials are never entered through the browser and never sent to it. The
-settings page reports `detected` or `not set` and points you at the wizard:
+Set them on the settings page — the **keys** panel has an input for each one.
+It only accepts writes from the machine running Egregore: the party password
+is enough to restyle a room, and deliberately not enough to set a credential.
+No route ever returns a key's value, and the input clears on save.
+
+If you would rather stay in the terminal:
 
 ```bash
 uv run egregore setup          # writes ~/.egregore/env at mode 0600
 ```
+
+Either way keys land in the same place and take effect on the next restart.
 
 The dashboard binds to `0.0.0.0` by default, so anyone on the venue network
 can watch the screens. Configuration is a different trust level: the settings
@@ -186,6 +236,10 @@ at around 10 video requests per day, and failed generations still consume it.
 See [docs/veo-setup.md](docs/veo-setup.md).
 
 ## Troubleshooting
+
+**The visuals move but nothing is listening.** Check the **audio** panel. If
+it says *Source: fixture*, the numbers are synthetic and no microphone is
+open — that is every demo preset. Use `presets/live-mic.yaml` for a real room.
 
 **The microphone produces `PortAudio -9986`.** macOS is refusing microphone
 access to your terminal, and reports it as a device fault. Grant it in System

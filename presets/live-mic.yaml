@@ -1,0 +1,62 @@
+# Live microphone, instant video — the quickest way to see the system react to
+# an actual room. Real mic, real on-device transcription, procedural renderer,
+# so there is no GPU wait and no API key involved.
+#
+#   uv run egregore run presets/live-mic.yaml
+#   open http://localhost:8420/?zone=main
+#
+# macOS: the terminal running this needs Microphone permission
+# (System Settings -> Privacy & Security -> Microphone). Without it PortAudio
+# fails at stream open with error -9986, which reads like a device fault.
+#
+# Watch the audio meter on /static/setup.html: with mic.type usb it is
+# reporting what the room actually sounds like, not a synthetic bed.
+
+party:
+  name: "Live Mic"
+  duration_hours: 2.0
+
+aesthetic:
+  grammar: |
+    Abstract, symbolic, non-representational. Deep saturated color,
+    organic forms dissolving into geometric ones. Movement slow and
+    liquid, never cutting, never frantic. Suggest meaning without
+    depicting it: no readable text, no recognizable faces, no literal
+    objects from the described themes.
+  drift: 0.4
+
+generation:
+  backend: "procedural"     # instant, free — the point here is the audio
+  clip_duration_s: 8
+  fallback: "none"
+
+budget:
+  total_usd: 0              # nothing can reach the cloud
+
+continuity:
+  default_mode: "mosaic"
+  loop_half_life_min: 15
+  active_pool_max: 40
+
+asr:
+  engine: "parakeet"        # local int8 ONNX, ~8x realtime
+  language: "en"
+
+zones:
+  - id: "main"
+    mic: { type: "usb", device: null }   # null = system default input
+    lens_stack: ["flow", "feedback", "bloom", "crt"]
+    screens: ["screen-1"]
+
+screens:
+  - id: "screen-1"
+    loop_phase_offset: 0.0
+
+privacy:
+  ring_buffer_minutes: 5
+  signage_required: true
+
+serving:
+  bind: "0.0.0.0:8420"
+
+clip_store_dir: "var/clips-live-mic"
