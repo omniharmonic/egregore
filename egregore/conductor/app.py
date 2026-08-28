@@ -195,11 +195,18 @@ def create_app(
     # -- client app ---------------------------------------------------------
 
     @app.get("/", include_in_schema=False)
-    async def index() -> FileResponse:
-        index_path = lens_dir / "index.html"
-        if not index_path.is_file():
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "lens client not installed")
-        return FileResponse(index_path)
+    async def index(zone: str | None = Query(None)) -> FileResponse:
+        """A screen when a zone is named, otherwise the join page.
+
+        Every existing `/?zone=main` URL keeps working — wall displays and the
+        operator's own tabs must not break — while someone who just types the
+        IP into a phone gets asked what their device is for.
+        """
+        name = "index.html" if zone else "join.html"
+        path = lens_dir / name
+        if not path.is_file():
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"{name} not installed")
+        return FileResponse(path)
 
     # check_dir=False: lens/ is another module's territory and may not be
     # fully populated at app-construction time (e.g. under test); a missing

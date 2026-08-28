@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="noindex">
+<title>Egregore — join</title>
+<style>
+  :root {
+    --bg:     #050706;
+    --accent: #33ff66;
+    --dim:    #5d6f64;
+    --dimmer: #33413a;
+    --text:   #b7c9be;
+    --warn:   #ff4d4d;
+    --amber:  #d8a14a;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+            "DejaVu Sans Mono", "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; min-height: 100%;
+    background: var(--bg); color: var(--text);
+    font: 400 15px/1.6 var(--mono);
+    -webkit-font-smoothing: antialiased;
+    font-variant-ligatures: none;
+    -webkit-text-size-adjust: 100%;
+  }
+  main { padding: 28px 20px 60px; max-width: 640px; margin: 0 auto; }
+
+  .wordmark {
+    margin: 0; white-space: pre; line-height: 0.88;
+    font-size: clamp(5px, 2.2vw, 11px);
+    color: var(--accent);
+    text-shadow: 0 0 14px rgba(51,255,102,.18);
+    -webkit-user-select: none; user-select: none;
+  }
+  .sub { color: var(--dim); margin: 10px 0 22px; }
+  h2 {
+    font: inherit; color: var(--accent); margin: 26px 0 10px;
+    font-weight: 400;
+  }
+  .rule { height: 1px; background: var(--dimmer); margin: 22px 0; }
+
+  /* Role buttons — the one decision this page exists to ask. */
+  .roles { display: flex; flex-direction: column; gap: 10px; }
+  .role {
+    display: block; width: 100%; text-align: left;
+    font: inherit; color: var(--text); background: transparent;
+    border: 1px solid var(--dimmer); border-radius: 0;
+    padding: 14px 16px; cursor: pointer;
+  }
+  .role:hover, .role:focus-visible { border-color: var(--accent); outline: none; }
+  .role.on { border-color: var(--accent); color: var(--accent); }
+  .role .what { display: block; font-size: 1.1em; }
+  .role .why { display: block; color: var(--dim); margin-top: 3px; }
+  .role.on .why { color: var(--dim); }
+
+  label { color: var(--dim); display: block; margin: 14px 0 4px; }
+  input, select {
+    font: inherit; width: 100%; color: var(--accent); background: transparent;
+    border: 0; border-bottom: 1px solid var(--dimmer); border-radius: 0;
+    padding: 6px 2px; outline: none;
+  }
+  input:focus-visible, select:focus-visible { border-bottom-color: var(--accent); }
+  select option { background: var(--bg); color: var(--text); }
+
+  button.go {
+    font: inherit; width: 100%; margin-top: 24px; padding: 14px;
+    color: var(--bg); background: var(--accent);
+    border: 1px solid var(--accent); border-radius: 0; cursor: pointer;
+  }
+  button.go:disabled { background: transparent; color: var(--dimmer);
+                       border-color: var(--dimmer); cursor: not-allowed; }
+  button.ghost {
+    font: inherit; padding: 10px 16px; color: var(--text);
+    background: transparent; border: 1px solid var(--dimmer);
+    border-radius: 0; cursor: pointer;
+  }
+  button.ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+  .err { color: var(--warn); min-height: 1.5em; margin-top: 10px; }
+  .note { color: var(--dim); }
+  .t { color: var(--accent); }
+  .warn { color: var(--amber); }
+
+  /* The address, big enough to read across a room and type from a phone. */
+  .addr {
+    display: block; color: var(--accent); word-break: break-all;
+    font-size: clamp(20px, 7vw, 40px); line-height: 1.25; margin: 6px 0 0;
+    text-shadow: 0 0 18px rgba(51,255,102,.2);
+  }
+
+  /* Transmitting panel */
+  .meter { display: flex; align-items: center; gap: 10px; margin: 14px 0; }
+  .meter .track {
+    flex: 1; height: 14px; border: 1px solid var(--dimmer); position: relative;
+  }
+  .meter .fill {
+    position: absolute; inset: 0 auto 0 0; width: 0;
+    background: var(--dimmer); transition: width .08s linear;
+  }
+  .meter .fill.sending { background: var(--accent); }
+  @media (prefers-reduced-motion: reduce) { .meter .fill { transition: none; } }
+  .state { color: var(--dim); }
+  .state.live { color: var(--accent); }
+  .state.bad { color: var(--warn); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+<pre class="wordmark" role="img" aria-label="EGREGORE">████ ████ ███  ████ ████ ████ ███  ████
+█    █    █  █ █    █    █  █ █  █ █
+███  █ ██ ███  ███  █ ██ █  █ ███  ███
+█    █  █ █ █  █    █  █ █  █ █ █  █
+████ ████ █  █ ████ ████ ████ █  █ ████</pre>
+<div class="sub" id="sub">a collective dream, in this building</div>
+
+<!-- ---------------- enrol ---------------- -->
+<section id="setup">
+  <div id="rejoin" hidden>
+    <div class="note">This device joined before, as <span class="t" id="rejoinAs"></span>.</div>
+    <button class="ghost" id="rejoinBtn" style="margin-top:10px">rejoin</button>
+    <div class="rule"></div>
+  </div>
+
+  <h2>what is this device?</h2>
+  <div class="roles">
+    <button class="role" data-role="transmit" type="button">
+      <span class="what">listen</span>
+      <span class="why">its microphone becomes part of the room the dream is made from</span>
+    </button>
+    <button class="role" data-role="receive" type="button">
+      <span class="what">show</span>
+      <span class="why">it becomes a screen playing the dream</span>
+    </button>
+    <button class="role" data-role="both" type="button">
+      <span class="what">both</span>
+      <span class="why">it listens and shows at the same time</span>
+    </button>
+  </div>
+
+  <label for="zone">which room?</label>
+  <select id="zone"></select>
+
+  <label for="newZone" id="newZoneLabel" hidden>name the new room</label>
+  <input id="newZone" placeholder="porch" autocomplete="off" hidden>
+
+  <label for="label">what should we call this device?</label>
+  <input id="label" autocomplete="off">
+
+  <button class="go" id="join" disabled>choose what this device does</button>
+  <div class="err" id="err"></div>
+
+  <div class="rule"></div>
+  <h2>pass it on</h2>
+  <div class="note">anyone else on this wifi can join at</div>
+  <span class="addr" id="addr">—</span>
+</section>
+
+<!-- ---------------- transmitting ---------------- -->
+<section id="live" hidden>
+  <h2>listening</h2>
+  <div class="note">
+    <span class="t" id="liveLabel"></span> is a microphone for
+    <span class="t" id="liveZone"></span>.
+  </div>
+  <div class="meter">
+    <div class="track"><div class="fill" id="fill"></div></div>
+    <span class="state" id="state">connecting</span>
+  </div>
+  <div class="note" id="gateNote">
+    Audio is only sent while someone is speaking — silence never leaves this
+    device. What is said travels over this wifi to the machine running
+    Egregore, is turned into text there, and is never stored or sent out of
+    the building.
+  </div>
+  <div style="display:flex; gap:10px; margin-top:20px; flex-wrap:wrap">
+    <button class="ghost" id="stop">stop</button>
+    <button class="ghost" id="alsoShow">also show the dream</button>
+  </div>
+</section>
+</main>
+
+<script type="module">
+import { startTransmit } from '/static/transmit.js';
+
+const $ = (id) => document.getElementById(id);
+const el = {
+  sub: $('sub'), setup: $('setup'), live: $('live'),
+  zone: $('zone'), newZone: $('newZone'), newZoneLabel: $('newZoneLabel'),
+  label: $('label'), join: $('join'), err: $('err'), addr: $('addr'),
+  rejoin: $('rejoin'), rejoinAs: $('rejoinAs'), rejoinBtn: $('rejoinBtn'),
+  liveLabel: $('liveLabel'), liveZone: $('liveZone'),
+  fill: $('fill'), state: $('state'), stop: $('stop'), alsoShow: $('alsoShow'),
+};
+
+const STORE = 'egregore.node';
+const NEW_ZONE = '— new room —';
+
+function saved() {
+  try { return JSON.parse(localStorage.getItem(STORE) || 'null'); }
+  catch { return null; }
+}
+function save(node) {
+  try { localStorage.setItem(STORE, JSON.stringify(node)); } catch { /* private mode */ }
+}
+
+// A stable id per device, so a reload rejoins instead of enrolling twice.
+function nodeId() {
+  const prior = saved();
+  if (prior && prior.id) return prior.id;
+  const bytes = new Uint8Array(4);
+  (window.crypto || {}).getRandomValues?.(bytes);
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return hex || String(Math.floor(Math.random() * 1e9).toString(16));
+}
+
+const ID = nodeId();
+let role = null;
+let transmitter = null;
+
+el.addr.textContent = location.origin;
+el.label.value = (saved() && saved().label) || `device-${ID.slice(0, 4)}`;
+
+// --- role picker -----------------------------------------------------------
+
+for (const btn of document.querySelectorAll('.role')) {
+  btn.addEventListener('click', () => {
+    for (const b of document.querySelectorAll('.role')) b.classList.remove('on');
+    btn.classList.add('on');
+    role = btn.dataset.role;
+    el.join.disabled = false;
+    el.join.textContent =
+      role === 'receive' ? 'show the dream' :
+      role === 'transmit' ? 'start listening' : 'listen and show';
+  });
+}
+
+el.zone.addEventListener('change', () => {
+  const isNew = el.zone.value === NEW_ZONE;
+  el.newZone.hidden = !isNew;
+  el.newZoneLabel.hidden = !isNew;
+  if (isNew) el.newZone.focus();
+});
+
+function chosenZone() {
+  if (el.zone.value === NEW_ZONE) return el.newZone.value.trim();
+  return el.zone.value;
+}
+
+// --- zones -----------------------------------------------------------------
+
+async function loadZones() {
+  // Enrolling with a throwaway id is how an un-joined device discovers which
+  // rooms exist; the response carries the zone list.
+  let zones = [];
+  try {
+    const r = await fetch('/api/nodes', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: ID, label: el.label.value, zone: 'main', role: 'receive' }),
+    });
+    if (r.ok) zones = (await r.json()).zones || [];
+  } catch { /* offline; the select still offers a new room */ }
+
+  el.zone.textContent = '';
+  for (const z of zones) {
+    const opt = document.createElement('option');
+    opt.value = z; opt.textContent = z;
+    el.zone.appendChild(opt);
+  }
+  const opt = document.createElement('option');
+  opt.value = NEW_ZONE; opt.textContent = NEW_ZONE;
+  el.zone.appendChild(opt);
+
+  const prior = saved();
+  if (prior && zones.includes(prior.zone)) el.zone.value = prior.zone;
+
+  if (prior && prior.role) {
+    el.rejoin.hidden = false;
+    el.rejoinAs.textContent = `${prior.label} · ${prior.role} · ${prior.zone}`;
+  }
+}
+
+// --- joining ---------------------------------------------------------------
+
+async function enroll(chosenRole, zone, label) {
+  const r = await fetch('/api/nodes', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: ID, label, zone, role: chosenRole }),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    throw new Error(body.detail || `enrol failed (${r.status})`);
+  }
+  save({ id: ID, label, zone, role: chosenRole });
+  return (await r.json()).node;
+}
+
+async function go(chosenRole, zone, label) {
+  el.err.textContent = '';
+  if (!zone) { el.err.textContent = 'pick a room, or name a new one.'; return; }
+  try {
+    await enroll(chosenRole, zone, label);
+  } catch (e) {
+    el.err.textContent = e.message;
+    return;
+  }
+
+  if (chosenRole === 'receive') {
+    location.href = `/?zone=${encodeURIComponent(zone)}`;
+    return;
+  }
+
+  try {
+    transmitter = await startTransmit({
+      zone, nodeId: ID,
+      onLevel: (rms, sending) => {
+        el.fill.style.width = `${Math.min(100, rms * 400).toFixed(1)}%`;
+        el.fill.classList.toggle('sending', sending);
+      },
+      onState: (s) => {
+        el.state.textContent = s;
+        el.state.className = 'state' + (s === 'live' ? ' live' : '');
+      },
+    });
+  } catch (e) {
+    // Almost always a denied permission prompt, and worth saying so plainly.
+    el.err.textContent =
+      'could not use the microphone — allow microphone access and try again.';
+    return;
+  }
+
+  el.liveLabel.textContent = label;
+  el.liveZone.textContent = zone;
+  el.setup.hidden = true;
+  el.live.hidden = false;
+  el.alsoShow.hidden = chosenRole !== 'both';
+  if (chosenRole === 'both') {
+    // Give the operator a moment to see it connected before the screen takes
+    // over; a phone that both listens and shows keeps transmitting there.
+    setTimeout(() => {
+      location.href = `/?zone=${encodeURIComponent(zone)}&transmit=1`;
+    }, 1500);
+  }
+}
+
+el.join.addEventListener('click', () => {
+  if (!role) return;
+  go(role, chosenZone(), el.label.value.trim() || `device-${ID.slice(0, 4)}`);
+});
+
+el.rejoinBtn.addEventListener('click', () => {
+  const prior = saved();
+  if (prior) go(prior.role, prior.zone, prior.label);
+});
+
+el.stop.addEventListener('click', () => {
+  if (transmitter) transmitter.stop();
+  el.live.hidden = true;
+  el.setup.hidden = false;
+});
+
+el.alsoShow.addEventListener('click', () => {
+  const prior = saved();
+  location.href = `/?zone=${encodeURIComponent(prior ? prior.zone : 'main')}&transmit=1`;
+});
+
+loadZones();
+</script>
+</body>
+</html>

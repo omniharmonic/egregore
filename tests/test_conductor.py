@@ -685,3 +685,12 @@ def test_ingest_requires_the_password_when_one_is_set(cfg_home):
             ws.receive_text()
     # Same refusal code the feature bus uses for an unauthenticated socket.
     assert exc.value.code == 4401
+
+
+def test_bare_root_serves_the_join_page_but_a_zone_url_still_serves_a_screen(cfg_home):
+    app = create_app(_cfg_state(), lens_dir=_LENS, password=None)
+    with TestClient(app) as client:
+        join = client.get("/")
+        screen = client.get("/?zone=main")
+    assert "this device" in join.text.lower()
+    assert 'id="gl"' in screen.text, "an existing screen URL must not break"
