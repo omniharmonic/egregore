@@ -557,7 +557,7 @@ def make_control_handler(
     return control_handler
 
 
-async def run_party(cfg: EgregoreConfig) -> None:
+async def run_party(cfg: EgregoreConfig, *, ignore_settings: bool = False) -> None:
     install_privacy_excepthook()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 
@@ -565,13 +565,31 @@ async def run_party(cfg: EgregoreConfig) -> None:
     # build_ladder; then the settings overlay, so the ladder is built from
     # what the operator last chose rather than only from the preset.
     config_store.load_env_file()
-    overrides = config_store.load_settings()
+    overrides = {} if ignore_settings else config_store.load_settings()
+    applied_overrides: list[tuple[str, object, object]] = []
     if overrides:
         try:
-            cfg = config_store.apply_overlay(cfg, overrides)
-            log.info("settings overlay applied from %s", config_store.settings_path())
+            merged = config_store.apply_overlay(cfg, overrides)
         except (ValueError, TypeError) as exc:
             log.warning("ignoring invalid settings overlay (%s); using the preset", exc)
+        else:
+            # Record what the overlay actually changed so the banner can say
+            # so. A saved setting quietly overruling the preset someone just
+            # typed is the most confusing thing this system can do.
+            preset_json = cfg.model_dump(mode="json")
+            merged_json = merged.model_dump(mode="json")
+            for dotted in config_store.dotted_keys(overrides):
+                was = config_store.value_at(preset_json, dotted)
+                now = config_store.value_at(merged_json, dotted)
+                if was != now:
+                    applied_overrides.append((dotted, was, now))
+            cfg = merged
+            if applied_overrides:
+                log.warning(
+                    "settings overlay from %s overrode the preset: %s",
+                    config_store.settings_path(),
+                    "; ".join(f"{k} {w!r} -> {n!r}" for k, w, n in applied_overrides),
+                )
     live = LiveSettings.from_config(cfg)
 
     store = ClipStore(Path(cfg.clip_store_dir))
@@ -713,7 +731,10 @@ async def run_party(cfg: EgregoreConfig) -> None:
 
     from egregore.banner import print_banner
 
-    print_banner(cfg, password=password, backends=[b.name for b in ladder])
+    print_banner(
+        cfg, password=password, backends=[b.name for b in ladder],
+        overrides=applied_overrides,
+    )
 
     try:
         await server.serve()

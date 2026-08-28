@@ -108,6 +108,11 @@ def main(argv: list[str] | None = None) -> int:
 
     p_run = sub.add_parser("run", help="start a party from a config file")
     p_run.add_argument("config", type=Path)
+    p_run.add_argument(
+        "--ignore-settings",
+        action="store_true",
+        help="run the preset exactly as written, ignoring ~/.egregore/settings.yaml",
+    )
 
     p_check = sub.add_parser("check", help="validate a config file")
     p_check.add_argument("config", type=Path)
@@ -164,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     from egregore.app import run_party
 
     try:
-        asyncio.run(run_party(cfg))
+        asyncio.run(run_party(cfg, ignore_settings=args.ignore_settings))
     except KeyboardInterrupt:
         print("\nshutdown: ring buffers zeroed, dream ended.")
     return 0
