@@ -639,3 +639,49 @@ def test_build_abstractor_defaults_to_heuristic(monkeypatch):
 
     with pytest.raises(ValueError):
         build_abstractor(WeaverConfig(engine="llm"))
+
+
+# ---------------------------------------------------------------------------
+# Lexicon coverage — ordinary conversation must reach real imagery
+# ---------------------------------------------------------------------------
+
+
+ROOM_TALK = {
+    "work": "I finally quit that job in March and the commute alone was killing me",
+    "tech": "we rewrote the scheduler in Rust because the garbage collector was "
+            "killing our tail latency during peak",
+    "feeling": "I have been feeling really overwhelmed lately, like everything is "
+               "happening at once and I cannot keep up",
+    "light": "the light through those windows in the afternoon goes all golden and "
+             "warm right before sunset",
+    "memory": "my grandmother kept shells like that in a bowl by the door",
+    "night": "we stayed up talking until it got light again",
+}
+
+
+def test_ordinary_conversation_reaches_real_imagery():
+    """The failure this guards against is silent and total.
+
+    When no keyword cluster matches, the abstractor backfills from
+    DEFAULT_MOTIFS and every prompt becomes the same generic drift — the
+    system looks like it is working while saying nothing about the room. A
+    lexicon of literal nouns missed four of six real conversations.
+    """
+    from egregore.weaver.abstractor import DEFAULT_MOTIFS, HeuristicAbstractor
+
+    a = HeuristicAbstractor()
+    generic = []
+    for name, text in ROOM_TALK.items():
+        theme = a.abstract_sync(text)
+        if list(theme.motifs) == list(DEFAULT_MOTIFS[: len(theme.motifs)]):
+            generic.append(name)
+    assert not generic, f"fell back to generic imagery for: {generic}"
+
+
+def test_contentless_chatter_still_falls_back():
+    # Falling back is correct when there is genuinely no theme; the point is
+    # that it should be the exception, not the norm.
+    from egregore.weaver.abstractor import DEFAULT_MOTIFS, HeuristicAbstractor
+
+    theme = HeuristicAbstractor().abstract_sync("wait, is there any more of that")
+    assert list(theme.motifs) == list(DEFAULT_MOTIFS[: len(theme.motifs)])

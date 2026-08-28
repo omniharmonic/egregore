@@ -88,6 +88,8 @@ CONCEPT_CLUSTERS: tuple[ConceptCluster, ...] = (
         "water",
         "ocean oceans sea seas water waters wave waves tide tides swim swimming "
         "beach shore shoreline coast coastal boat boats sail sailing drown drowning "
+        "rain river rivers pool pools flood flooding stream creek bath shower "
+        "cove reef tidepool tidepools puddle wet damp"
         "current currents salt saltwater surf lake harbour harbor dive diving",
         ("vast blue depth", "surface breaking into light", "slow tidal pull"),
         ("water", "deep blue", "pressure"),
@@ -97,6 +99,9 @@ CONCEPT_CLUSTERS: tuple[ConceptCluster, ...] = (
         "memory memories remember remembered remembering grandmother grandfather "
         "grandma grandpa childhood mother father family families ancestor ancestors "
         "past photograph photographs story stories heritage nostalgia inherited "
+        "used remember reminds childhood younger kid kids growing raised "
+        "hometown school reunion anniversary album keepsake heirloom generation "
+        "generations granddad nan nana grandparents"
         "sister brother cousin aunt uncle parents",
         ("inherited memory", "a shape passed down", "layers folded over time"),
         ("dust", "warm ochre", "patina"),
@@ -104,6 +109,8 @@ CONCEPT_CLUSTERS: tuple[ConceptCluster, ...] = (
     _cluster(
         "fire",
         "fire fires burn burns burning burned flame flames heat hot smoke smoking "
+        "warm warmth glow glowing burnt bonfire fireplace stove lit torch "
+        "sunburn heater"
         "ash embers ember candle candles spark sparks blaze scorched",
         ("heat blooming", "slow combustion", "edges curling into ash"),
         ("fire", "ember orange", "smoke"),
@@ -112,6 +119,8 @@ CONCEPT_CLUSTERS: tuple[ConceptCluster, ...] = (
         "night",
         "night nights star stars starlight moon moonlight dark darkness midnight "
         "cosmos universe galaxy galaxies orbit planet planets constellation "
+        "evening evenings tonight late sleep sleeping asleep dream dreams "
+        "dreaming quiet still bedtime nocturnal dusk twilight sunset"
         "telescope astronaut",
         ("dark expanse, points of light", "distance without edges", "quiet drift of bodies"),
         ("void black", "silver", "cold light"),
@@ -120,6 +129,10 @@ CONCEPT_CLUSTERS: tuple[ConceptCluster, ...] = (
         "work",
         "work working job jobs money boss office deadline deadlines career business "
         "rent bills salary wages market markets tax taxes client clients meeting "
+        "quit quitting hired fired laid promotion promoted commute commuting "
+        "shift shifts manager managers startup startups project projects team "
+        "teams colleague colleagues freelance contract hustle overtime interview "
+        "resume raise"
         "meetings shift shifts overtime economy",
         ("gears and pressure", "grid tightening", "repetition under load"),
         ("iron", "grey steel", "friction"),
@@ -128,6 +141,9 @@ CONCEPT_CLUSTERS: tuple[ConceptCluster, ...] = (
         "love",
         "love loves loved loving heart hearts kiss kissed lover partner romance "
         "romantic tender tenderness affection intimacy intimate wedding marriage "
+        "date dating relationship relationships partner girlfriend boyfriend "
+        "wife husband crush marry married wedding together intimacy affection "
+        "flirt kiss"
         "married beloved crush",
         ("warmth held close", "two currents meeting", "soft gravity"),
         ("blush pink", "warm gold", "pulse"),
@@ -136,6 +152,8 @@ CONCEPT_CLUSTERS: tuple[ConceptCluster, ...] = (
         "grief",
         "died die dying death dead funeral grief grieving loss lost mourn mourning "
         "buried burial illness sick sickness hospital cancer goodbye farewell "
+        "miss missing gone passed funeral mourn mourning loss lost lonely alone "
+        "ache absence goodbye"
         "widow orphan",
         ("descent", "an absence given shape", "slow fade at the edges"),
         ("ash grey", "cold water", "hollow"),
@@ -144,6 +162,9 @@ CONCEPT_CLUSTERS: tuple[ConceptCluster, ...] = (
         "journey",
         "travel travelling traveling journey road roads train trains plane planes "
         "flight flights trip drive driving walk walking path paths leaving arrive "
+        "drive drove driving trip trips flight flying airport train road roads "
+        "travel travelling traveled route commute wander wandering move moving "
+        "arrive leaving"
         "arriving distance map maps migration border airport crossing",
         ("long passage", "horizon receding", "threads pulled outward"),
         ("pale gold", "wind", "haze"),
@@ -152,6 +173,9 @@ CONCEPT_CLUSTERS: tuple[ConceptCluster, ...] = (
         "music",
         "music song songs sing singing sang dance dancing danced rhythm rhythms "
         "beat beats drum drums guitar band bands concert melody melodies choir "
+        "playlist album albums track tracks loud bass vinyl dj speaker speakers "
+        "volume tune tunes listen listening headphones set sets festival gig "
+        "groove"
         "orchestra dj vinyl record",
         ("pulse made visible", "overlapping cycles", "waves of resonance"),
         ("vivid magenta", "vibration", "shimmer"),
@@ -160,6 +184,8 @@ CONCEPT_CLUSTERS: tuple[ConceptCluster, ...] = (
         "growth",
         "tree trees forest forests garden gardens grow growing grew plant plants "
         "leaf leaves root roots seed seeds bloom blooming flower flowers moss wood "
+        "learn learning better change changing improve progress build building "
+        "start starting new begin beginning garden plant plants seed grow grew"
         "woods branch branches soil harvest farm",
         ("branching growth", "slow unfurling", "reaching upward"),
         ("moss green", "bark", "sap"),
@@ -168,6 +194,9 @@ CONCEPT_CLUSTERS: tuple[ConceptCluster, ...] = (
         "city",
         "city cities street streets traffic building buildings apartment apartments "
         "subway metro neighborhood neighbourhood town towns crowd crowds urban "
+        "street streets traffic subway metro bus neighbourhood neighborhood "
+        "downtown apartment building buildings block corner bar bars cafe "
+        "restaurant crowd crowded"
         "downtown bus taxi sidewalk block skyline",
         ("stacked geometry", "channels of moving light", "density folding in"),
         ("concrete", "sodium yellow", "glass"),
@@ -175,6 +204,9 @@ CONCEPT_CLUSTERS: tuple[ConceptCluster, ...] = (
     _cluster(
         "weather",
         "storm storms rain raining wind winds thunder lightning cloud clouds snow "
+        "sun sunny sunshine sunset sunrise light lighting golden warm hot heat "
+        "sky skies breeze afternoon morning shade cloudy grey gray season "
+        "seasons spring summer autumn fall"
         "snowing cold winter freezing fog mist hurricane drought humid monsoon",
         ("gathering pressure", "sheets of moving air", "stillness before release"),
         ("slate grey", "charged air", "vapour"),
@@ -183,6 +215,9 @@ CONCEPT_CLUSTERS: tuple[ConceptCluster, ...] = (
         "machine",
         "computer computers phone phones internet screen screens code coding "
         "software machine machines robot robots data network networks digital "
+        "app apps server servers bug bugs database latency deploy deployed cloud "
+        "model models ai build builds system systems api backend frontend rust "
+        "python javascript scheduler cache memory compute gpu chip"
         "algorithm algorithms server model models app apps",
         ("lattice of signals", "recursive structure", "precision unfolding"),
         ("circuit teal", "chrome", "signal"),
@@ -191,6 +226,8 @@ CONCEPT_CLUSTERS: tuple[ConceptCluster, ...] = (
         "body",
         "body bodies breath breathe breathing tired exhausted exhaustion pain ache "
         "aching hands skin blood muscle rest resting heal healing yoga run running "
+        "hungry food eat eating drink drinking sick ill sleep sleepy warm cold "
+        "hurt sore stretch walk walking sit sitting hug touch"
         "stretch pulse sleep sleeping dream dreams",
         ("slow expansion and release", "pulse beneath a surface", "weight settling"),
         ("warm red", "tissue", "breath"),
@@ -199,6 +236,9 @@ CONCEPT_CLUSTERS: tuple[ConceptCluster, ...] = (
         "tension",
         "fight fighting argue argued argument angry anger war wars conflict tension "
         "protest politics political fear afraid stress stressed worry worried "
+        "overwhelmed overwhelming pressure panic nervous tense cope coping "
+        "burnout burnt frustrated frustrating exhausting difficult hard struggle "
+        "struggling deadline pile piling much"
         "anxious anxiety threat crisis",
         ("opposing currents", "fracture lines", "held tension"),
         ("hard shadow", "deep crimson", "static"),
@@ -207,6 +247,8 @@ CONCEPT_CLUSTERS: tuple[ConceptCluster, ...] = (
         "celebration",
         "party parties birthday celebrate celebration laugh laughing laughter "
         "friend friends drink drinks festival holiday happy fun toast gathering "
+        "party parties birthday cheers toast drinks laugh laughing laughter fun "
+        "joy happy excited celebrate celebrating friends gathering together"
         "reunion feast cheers",
         ("bright scatter", "expanding circles of warmth", "overlapping motion"),
         ("gold", "warm spectrum", "effervescence"),
@@ -215,6 +257,8 @@ CONCEPT_CLUSTERS: tuple[ConceptCluster, ...] = (
         "spirit",
         "god gods spirit spiritual soul souls prayer pray meditation meditate "
         "sacred ritual rituals church temple mosque belief believe meaning silence "
+        "believe belief meaning meant soul sacred ritual pray prayer meditate "
+        "meditation wonder awe mystery presence"
         "mystery divine transcendent ceremony",
         ("a slow ascent", "light through a threshold", "stillness with weight"),
         ("cathedral blue", "gold leaf", "hush"),
