@@ -7,3 +7,5 @@ var/
 .ruff_cache/
 uv.lock
 .DS_Store
+.env
+.env.*
