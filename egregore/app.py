@@ -24,7 +24,14 @@ from pathlib import Path
 
 from egregore.conductor import ConductorState, create_app
 from egregore.config.schema import EgregoreConfig, ZoneConfig
-from egregore.forge import ClipStore, ComfyUIBackend, Forge, MockBackend, VeoBackend
+from egregore.forge import (
+    ClipStore,
+    ComfyUIBackend,
+    FalBackend,
+    Forge,
+    MockBackend,
+    VeoBackend,
+)
 from egregore.governor import Governor
 from egregore.listener import FixtureSource, MoodIntegrator, ZoneEvents
 from egregore.loom import ZoneLoom
@@ -63,6 +70,18 @@ def build_ladder(cfg: EgregoreConfig, store: ClipStore) -> list[VideoBackend]:
         )
     elif want_cloud:
         log.warning("cloud backend requested but GEMINI_API_KEY is not set; skipping")
+    want_fal = choice in ("fal", "auto") or cfg.generation.fallback == "fal"
+    if want_fal and cfg.budget.total_usd > 0 and os.environ.get("FAL_KEY"):
+        rungs.append(
+            FalBackend(
+                store,
+                model=cfg.generation.fal_model,
+                resolution=cfg.generation.resolution,
+                aspect_ratio=cfg.generation.aspect_ratio,
+            )
+        )
+    elif want_fal and cfg.budget.total_usd > 0:
+        log.warning("fal backend requested but FAL_KEY is not set; skipping")
     if choice in ("local", "auto") or cfg.generation.fallback == "local":
         rungs.append(
             ComfyUIBackend(
@@ -155,10 +174,23 @@ def _throughput_floor(
 
 
 def cost_per_clip(cfg: EgregoreConfig, ladder: list[VideoBackend]) -> Decimal:
-    """Expected cadence cost: cloud tier price if a cloud rung exists, else 0."""
-    if any(isinstance(b, VeoBackend) for b in ladder):
-        per_sec = _CLOUD_PER_SEC.get(cfg.generation.model, Decimal("0.20"))
-        return per_sec * cfg.generation.clip_duration_s
+    """Expected cadence cost: the *preferred* metered rung's price, else 0.
+
+    This feeds the cadence formula, not the ceiling — reservations always use
+    each backend's own ``max_plausible_cost``. It reads the first metered rung
+    in ladder order rather than any Veo rung anywhere, so a fal-first ladder
+    paces on fal's price instead of a cloud price it will never pay.
+    """
+    for backend in ladder:
+        if isinstance(backend, FalBackend):
+            model = backend.catalogue.get(cfg.generation.fal_model, backend.model)
+            per_sec = model.price_per_second.get(
+                backend.resolution, model.worst_price_per_second
+            )
+            return per_sec * cfg.generation.clip_duration_s
+        if isinstance(backend, VeoBackend):
+            per_sec = _CLOUD_PER_SEC.get(cfg.generation.model, Decimal("0.20"))
+            return per_sec * cfg.generation.clip_duration_s
     return Decimal("0")
 
 

@@ -33,6 +33,7 @@ from egregore.forge import (
     theme_digest,
     variant_for,
 )
+from egregore.forge.fal import FAL_MODELS, FalBackend
 from egregore.forge.veo import (
     COST_PER_SECOND,
     COST_PER_SECOND_BY_RESOLUTION,
@@ -1144,3 +1145,203 @@ async def test_comfy_generate_records_its_own_wall_time(store: ClipStore) -> Non
     )
     await backend.generate("a prompt", 4, "ltx-2", zone="main")
     assert backend.estimated_latency("ltx-2").total_seconds() < 999.0
+
+
+# ---------------------------------------------------------------------------
+# FalBackend — one queue protocol, many models
+# ---------------------------------------------------------------------------
+
+
+FAL_VIDEO_URL = "https://v3.fal.media/files/rabbit/abc123.mp4"
+FAL_BYTES = b"\x00\x00\x00\x18ftypmp42" + b"fal-clip-bytes" * 8
+FAL_MODEL_ID = "minimax/h3-max/text-to-video"
+
+
+def fal_transport(
+    recorder: dict, *, queued_polls: int = 2, submit_status: int = 200,
+    fail_with: str | None = None,
+) -> httpx.MockTransport:
+    state = {"polls": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        recorder.setdefault("requests", []).append((request.method, url))
+        recorder.setdefault("headers", []).append(dict(request.headers))
+
+        if request.method == "POST" and url.endswith(FAL_MODEL_ID):
+            recorder["payload"] = json.loads(request.content)
+            if submit_status != 200:
+                return httpx.Response(submit_status, json={"detail": "nope"})
+            return httpx.Response(200, json={"request_id": "req-1"})
+
+        if request.method == "GET" and url.endswith("/requests/req-1/status"):
+            state["polls"] += 1
+            if fail_with is not None:
+                return httpx.Response(
+                    200, json={"status": "COMPLETED", "error": "boom",
+                               "error_type": fail_with},
+                )
+            if state["polls"] <= queued_polls:
+                return httpx.Response(200, json={"status": "IN_QUEUE", "queue_position": 1})
+            recorder["polls"] = state["polls"]
+            return httpx.Response(200, json={"status": "COMPLETED"})
+
+        if request.method == "GET" and url.endswith("/requests/req-1"):
+            return httpx.Response(
+                200,
+                json={"video": {"url": FAL_VIDEO_URL, "content_type": "video/mp4"},
+                      "expanded_prompt": "…", "timings": {"inference": 42.0}},
+            )
+
+        if request.method == "GET" and url == FAL_VIDEO_URL:
+            recorder["downloaded"] = True
+            return httpx.Response(200, content=FAL_BYTES)
+
+        return httpx.Response(404, json={"error": f"unexpected {url}"})
+
+    return httpx.MockTransport(handler)
+
+
+def fal_backend(store: ClipStore, transport: httpx.MockTransport, **kw) -> FalBackend:
+    kw.setdefault("api_key", "fal-test-key")
+    return FalBackend(
+        store, client=httpx.AsyncClient(transport=transport), poll_interval_s=0.0, **kw
+    )
+
+
+async def test_fal_generate_cycle(store: ClipStore) -> None:
+    recorder: dict = {}
+    backend = fal_backend(store, fal_transport(recorder))
+
+    ref = await backend.generate("an abstract prompt", 6, "minimax-h3-max", zone="main")
+
+    assert ref.backend == "fal"
+    assert ref.tier == "minimax-h3-max"
+    assert ref.duration_s == 6.0
+    assert ref.path.read_bytes() == FAL_BYTES
+    assert recorder["downloaded"] is True
+    assert recorder["polls"] == 3  # polled through IN_QUEUE, then COMPLETED
+
+    body = recorder["payload"]
+    assert body["prompt"] == "an abstract prompt"
+    assert body["duration"] == 6
+    assert body["resolution"] == "768P"
+    assert body["prompt_expansion_mode"] == "balanced"  # model-specific knob
+    await backend.close()
+
+
+async def test_fal_authorizes_with_key_scheme_and_not_on_the_cdn(store: ClipStore) -> None:
+    recorder: dict = {}
+    backend = fal_backend(store, fal_transport(recorder))
+    await backend.generate("p", 5, "minimax-h3-max", zone="main")
+
+    by_url = dict(zip([u for _, u in recorder["requests"]], recorder["headers"], strict=True))
+    api_headers = [h for u, h in by_url.items() if u != FAL_VIDEO_URL]
+    assert all(h["authorization"] == "Key fal-test-key" for h in api_headers)
+    # The media URL is pre-signed and points at a CDN we do not control, so
+    # the key must not ride along with the download.
+    assert "authorization" not in by_url[FAL_VIDEO_URL]
+    await backend.close()
+
+
+async def test_fal_reserves_against_standard_price_never_the_promo(store: ClipStore) -> None:
+    # minimax-h3-max runs $0.025/s (480P) on promo but $0.05 standard. A
+    # reservation outlives a promo, so the ceiling holds the standard rate.
+    at_480 = FalBackend(store, api_key="k", resolution="480P")
+    assert at_480.max_plausible_cost(8, "minimax-h3-max") == Decimal("0.80")  # .05*8*2
+
+    at_768 = FalBackend(store, api_key="k", resolution="768P")
+    assert at_768.max_plausible_cost(8, "minimax-h3-max") == Decimal("1.28")  # .08*8*2
+    assert at_768.max_plausible_cost(5, "minimax-h3") == Decimal("0.60")
+
+    # Unknown tier is charged as the most expensive model, never as free.
+    assert at_480.max_plausible_cost(8, "some-new-model") == Decimal("1.28")
+
+    # Whatever the resolution, a reservation covers at least twice the real
+    # standard price of the clip it is reserving for (PRD B-2).
+    for backend in (at_480, at_768):
+        for key, model in FAL_MODELS.items():
+            actual = model.price_per_second.get(
+                backend.resolution, model.worst_price_per_second
+            )
+            assert backend.max_plausible_cost(8, key) >= actual * 8 * 2
+
+
+async def test_fal_rejects_unknown_model_at_construction(store: ClipStore) -> None:
+    with pytest.raises(ValueError, match="unknown fal model"):
+        FalBackend(store, model="not-a-model", api_key="k")
+
+
+async def test_fal_rejects_duration_the_model_will_not_accept(store: ClipStore) -> None:
+    recorder: dict = {}
+    backend = fal_backend(store, fal_transport(recorder))
+    # 4s is a valid Egregore clip length but below MiniMax's 5s floor; failing
+    # here lets the ladder drop a rung instead of paying for a refusal.
+    with pytest.raises(ValueError, match="duration 4s not in"):
+        await backend.generate("p", 4, "minimax-h3-max", zone="main")
+    assert "requests" not in recorder
+    await backend.close()
+
+
+async def test_fal_refuses_continuation_and_seeding_it_cannot_do(store: ClipStore) -> None:
+    recorder: dict = {}
+    backend = fal_backend(store, fal_transport(recorder))
+    first = await backend.generate("p", 5, "minimax-h3-max", zone="main")
+
+    # Silently dropping either would look like it worked while quietly
+    # breaking the continuity handoff.
+    with pytest.raises(RuntimeError, match="cannot continue a previous clip"):
+        await backend.generate("p", 5, "minimax-h3-max", extend_from=first, zone="main")
+    with pytest.raises(RuntimeError, match="takes no first-frame seed"):
+        await backend.generate("p", 5, "minimax-h3-max", seed_image=b"png", zone="main")
+
+    caps = backend.capabilities
+    assert caps.supports_native_extend is False
+    assert caps.max_chain_length == 0
+    await backend.close()
+
+
+async def test_fal_surfaces_a_failed_generation(store: ClipStore) -> None:
+    recorder: dict = {}
+    backend = fal_backend(store, fal_transport(recorder, fail_with="ContentPolicy"))
+    with pytest.raises(RuntimeError, match="ContentPolicy"):
+        await backend.generate("p", 5, "minimax-h3-max", zone="main")
+    await backend.close()
+
+
+async def test_fal_submit_failure_is_not_silent(store: ClipStore) -> None:
+    backend = fal_backend(store, fal_transport({}, submit_status=422))
+    with pytest.raises(RuntimeError, match="HTTP 422"):
+        await backend.generate("p", 5, "minimax-h3-max", zone="main")
+    await backend.close()
+
+
+@pytest.mark.parametrize(
+    "requested,expected",
+    [("480p", "480P"), ("768P", "768P"), ("720p", "768P"), ("1080p", "768P"),
+     ("4k", "768P")],
+)
+async def test_fal_maps_party_resolutions_onto_what_the_model_offers(
+    store: ClipStore, requested: str, expected: str
+) -> None:
+    # Party configs speak "1080p"; these models top out at 768P. Asking for
+    # more should land on the best available rather than erroring at request
+    # time, which would take the rung down for a cosmetic mismatch.
+    backend = FalBackend(store, api_key="k", resolution=requested)
+    assert backend.resolution == expected
+
+
+async def test_fal_health_needs_a_key(store: ClipStore) -> None:
+    assert (await FalBackend(store, api_key=None).health()).status is BackendStatus.DOWN
+    healthy = await FalBackend(store, api_key="k").health()
+    assert healthy.status is BackendStatus.HEALTHY
+    assert "minimax-h3-max" in healthy.detail
+
+
+async def test_fal_learns_its_queue_latency(store: ClipStore) -> None:
+    backend = fal_backend(store, fal_transport({}))
+    seeded = backend.estimated_latency("minimax-h3-max").total_seconds()
+    assert seeded == pytest.approx(90.0)
+    await backend.generate("p", 5, "minimax-h3-max", zone="main")
+    assert backend.estimated_latency("minimax-h3-max").total_seconds() < seeded
+    await backend.close()

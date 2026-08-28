@@ -50,15 +50,19 @@ class GenerationConfig(BaseModel):
     # just a test double ("mock" is kept as an alias). "local" is diffusion
     # via ComfyUI/LTX-2 on operator hardware. Local paths are first-class
     # peers of the cloud, not fallbacks.
-    backend: Literal["veo", "local", "procedural", "mock", "auto"] = "auto"
+    backend: Literal["veo", "fal", "local", "procedural", "mock", "auto"] = "auto"
     model: str = "veo-3.1-lite"
     resolution: str = "1080p"
     aspect_ratio: str = "16:9"
     clip_duration_s: int = Field(8, ge=2, le=8)
     generate_audio: bool = False  # always false; validated below
-    fallback: Literal["local", "procedural", "mock", "none"] = "procedural"
+    fallback: Literal["fal", "local", "procedural", "mock", "none"] = "procedural"
     comfyui_url: str = "http://127.0.0.1:8188"  # local diffusion server (ComfyUI/LTX-2)
     local_model: str = "ltx-2"
+    # fal.ai fronts many video models behind one queue protocol, so the model
+    # is a catalogue key (egregore.forge.fal.FAL_MODELS) rather than a second
+    # backend. Swapping vendors is a config edit, not a code change.
+    fal_model: str = "minimax-h3-max"
 
     @field_validator("generate_audio")
     @classmethod
