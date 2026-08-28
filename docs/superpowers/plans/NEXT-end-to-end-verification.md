@@ -14,6 +14,16 @@ Run `presets/local-demo.yaml` with ComfyUI up, speak, and confirm a clip whose
 mtime is after the sentence that produced it. The 5-minute render makes this
 slow to observe, not hard.
 
+### A1b. ComfyUI jobs outlive the party that queued them — BUG
+Found while proving A1. ComfyUI's queue lives in the server, so every restart
+of Egregore leaves its in-flight and pending renders running. Four orphaned
+12-minute jobs from earlier runs were ahead of the live one, which looked
+exactly like "local video never appears". `ComfyUIBackend` should cancel its
+outstanding prompt ids on close (ComfyUI takes `POST /queue {"delete": [id]}`
+and `/interrupt`), and the dashboard should show the backend's queue depth so
+a stale backlog is visible rather than mysterious. `FalBackend` has the same
+shape of problem and fal hands back a `cancel_url` for it.
+
 ### A2. Multiple zones, each with its own video
 Topology tests pass at the unit level. Nobody has watched two screens showing
 different clips derived from two rooms' speech. Do `independent`, then
@@ -99,6 +109,14 @@ restructuring anything. Keep the default as one machine, with every URL
 defaulting to localhost.
 
 ---
+
+### A5. Shader passes are dropped under software rendering
+Not a bug, but it confuses every screenshot taken in a headless browser: the
+Lens drops lens passes when frame time exceeds budget (VIS-7), and SwiftShader
+is always over budget, so automated captures often show `lens 0/4` and look
+like the stack is not running. Real GPUs do not hit this. Any visual check of
+the shaders needs either a real GPU or the adaptive drop pinned off for the
+duration of the test.
 
 ## D. Answered, for the record
 
