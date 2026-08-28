@@ -55,9 +55,40 @@ system should not depend on someone knowing that:
 
 ---
 
+## A6. Aesthetic grammar should be editable inline
+The dashboard shows each zone's prompt preamble, which is the right place for
+it — but it is read-only. Make it editable per zone and applied live: it is
+the single strongest lever over how everything looks, and changing it
+currently means editing a preset and restarting a party.
+
+## A7. Abstract is a choice, not a law
+The grammar hard-codes "abstract, symbolic, non-representational". Offer named
+registers — abstract, semi-representational, figurative — as a starting point
+someone can then edit, rather than one aesthetic baked into every preset.
+
+## A8. Continuity mode is unproven on both real backends
+Everything so far has run in mosaic. Continuity chains clips with last-frame
+seeding, and neither fal nor LTX has been watched doing it. Worth knowing
+before a party whether it looks better than mosaic — and whether MiniMax,
+which cannot continue its own clips, degrades gracefully.
+
+## A9. Local models driving the whole thing, at quality
+Local LTX is proved to produce a clip from real speech (76s wall, 512x320,
+8 steps). What has not been seen is a *good* local party: enough clips, at a
+resolution worth looking at, sustaining a loop. This is the highest-value
+remaining verification.
+
 ## B. Procedural art: make it tunable, then make it listen
 
 The audio-reactive shader stack is the part that most wants knobs.
+
+### B0. Make the art more alive
+The direction asked for: smoke, liquid, light, refraction, diffusion,
+psychedelic. The existing flow/feedback/liquid/bloom lenses are the seed of
+that and the parts to push. Worth adding: domain-warped flow, chromatic
+refraction that separates on movement, a smoke/curl-noise advection pass, and
+light-bloom that blooms from the video's own bright regions rather than
+uniformly.
 
 ### B1. Expose shader parameters
 Each lens has constants baked into its `.frag`. Lift the ones worth playing
