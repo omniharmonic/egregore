@@ -44,6 +44,8 @@
     color: var(--dim);
   }
   .head .who { color: var(--accent); }
+  a.navlink { color: var(--dim); text-decoration: none; }
+  a.navlink:hover, a.navlink:focus-visible { color: var(--accent); }
 
   .panels { display: flex; flex-wrap: wrap; gap: 18px 26px; align-items: flex-start; }
   pre.panel {
@@ -92,7 +94,7 @@
 
   <div class="head">
     <div><span class="who" id="party">—</span> <span id="subtitle">operator status</span></div>
-    <div id="link">connecting<span class="cursor"></span></div>
+    <div><a class="navlink" href="/static/setup.html">settings</a> · <span id="link">connecting</span><span class="cursor"></span></div>
   </div>
 
   <div class="panels" id="panels"></div>
