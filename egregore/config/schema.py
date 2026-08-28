@@ -26,14 +26,39 @@ class AestheticConfig(BaseModel):
     reference_images: list[str] = Field(default_factory=list)
 
 
+class WeaverLLMConfig(BaseModel):
+    """Local LLM serving the Weaver's abstraction stage.
+
+    Any OpenAI-compatible endpoint works: llama.cpp server, Ollama
+    (http://localhost:11434/v1), vLLM. When unset (or unreachable at
+    startup), the deterministic heuristic abstractor runs instead —
+    the pipeline never depends on an LLM being present.
+    """
+
+    base_url: str | None = None  # e.g. "http://localhost:11434/v1"
+    model: str = "qwen3:14b"
+    api_key_env: str = "EGREGORE_LLM_API_KEY"  # most local servers need none
+
+
+class WeaverConfig(BaseModel):
+    engine: Literal["auto", "llm", "heuristic"] = "auto"  # auto = llm if configured
+    llm: WeaverLLMConfig = Field(default_factory=WeaverLLMConfig)
+
+
 class GenerationConfig(BaseModel):
-    backend: Literal["veo", "local", "mock", "auto"] = "auto"
+    # "procedural" is the zero-cost ffmpeg renderer — a real backend, not
+    # just a test double ("mock" is kept as an alias). "local" is diffusion
+    # via ComfyUI/LTX-2 on operator hardware. Local paths are first-class
+    # peers of the cloud, not fallbacks.
+    backend: Literal["veo", "local", "procedural", "mock", "auto"] = "auto"
     model: str = "veo-3.1-lite"
     resolution: str = "1080p"
     aspect_ratio: str = "16:9"
     clip_duration_s: int = Field(8, ge=2, le=8)
     generate_audio: bool = False  # always false; validated below
-    fallback: Literal["local", "mock", "none"] = "mock"
+    fallback: Literal["local", "procedural", "mock", "none"] = "procedural"
+    comfyui_url: str = "http://127.0.0.1:8188"  # local diffusion server (ComfyUI/LTX-2)
+    local_model: str = "ltx-2"
 
     @field_validator("generate_audio")
     @classmethod
@@ -130,6 +155,7 @@ class EgregoreConfig(BaseModel):
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
     continuity: ContinuityConfig = Field(default_factory=ContinuityConfig)
     asr: AsrConfig = Field(default_factory=AsrConfig)
+    weaver: WeaverConfig = Field(default_factory=WeaverConfig)
     zones: list[ZoneConfig] = Field(default_factory=lambda: [ZoneConfig(id="main")])
     screens: list[ScreenConfig] = Field(default_factory=list)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)

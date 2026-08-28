@@ -1,0 +1,55 @@
+# Ritual / ceremonial container — careful aesthetic direction, maximum
+# tonal sensitivity. The non-overridable safety floor applies everywhere;
+# this grammar adds further gentleness on top of it.
+party:
+  name: "Ceremony"
+  duration_hours: 6
+
+aesthetic:
+  grammar: |
+    Sacred, slow, luminous, abstract. Stained glass, deep-sea
+    bioluminescence, aurora, candle flame seen through water.
+    Nothing sudden, nothing sharp-edged, nothing that looms.
+    Movement is breath-paced and continuous. Palette holds to deep
+    blues, golds, and warm darkness. Suggest the numinous without
+    depicting any being, figure, or face. No readable text.
+  drift: 0.25               # track the room closely; this container is held
+
+generation:
+  backend: "auto"
+  model: "veo-3.1-fast"     # higher tier: image quality matters most here
+  clip_duration_s: 8
+  fallback: "local"
+
+budget:
+  total_usd: 100.00
+  spend_curve:
+    - { at: "0%",   rate: 0.6 }
+    - { at: "50%",  rate: 1.4 }
+    - { at: "100%", rate: 0.5 }
+
+continuity:
+  default_mode: "continuity"   # one unbroken dream
+  loop_half_life_min: 43
+  active_pool_max: 150
+
+asr:
+  engine: "parakeet"
+
+zones:
+  - id: "circle"
+    mic: { type: "usb", device: "default" }
+    lens_stack: ["liquid", "feedback", "bloom"]
+    continuity_mode: "continuity"
+    screens: ["altar-projector"]
+
+screens:
+  - id: "altar-projector"
+    loop_phase_offset: 0.0
+
+privacy:
+  ring_buffer_minutes: 5
+  signage_required: true
+
+serving:
+  bind: "0.0.0.0:8420"

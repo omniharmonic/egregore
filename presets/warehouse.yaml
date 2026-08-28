@@ -1,0 +1,73 @@
+# Large event / warehouse — many zones, many screens, long duration,
+# remote screens joining over the internet.
+party:
+  name: "Warehouse"
+  duration_hours: 8
+
+aesthetic:
+  grammar: |
+    Vast, architectural, abstract. Monumental slow geometry, fields of
+    color that move like weather systems, structural forms dissolving
+    and reforming. Scale over intimacy. No readable text, no faces,
+    no literal objects from the described themes.
+  drift: 0.5
+
+generation:
+  backend: "auto"
+  model: "veo-3.1-lite"
+  clip_duration_s: 8
+  fallback: "local"
+
+budget:
+  total_usd: 250.00
+  spend_curve:
+    - { at: "0%",   rate: 0.4 }
+    - { at: "25%",  rate: 1.0 }
+    - { at: "55%",  rate: 1.6 }
+    - { at: "85%",  rate: 0.9 }
+    - { at: "100%", rate: 0.3 }
+
+continuity:
+  default_mode: "mosaic"
+  loop_half_life_min: 58
+  active_pool_max: 300
+
+asr:
+  engine: "parakeet"
+
+zones:
+  - id: "main-floor"
+    mic: { type: "network", host: "listener-01.local" }
+    lens_stack: ["flow", "kaleidoscope", "bloom"]
+    screens: ["wall-north", "wall-south"]
+  - id: "bar"
+    mic: { type: "network", host: "listener-02.local" }
+    lens_stack: ["feedback", "chroma"]
+    screens: ["bar-panel"]
+  - id: "chill"
+    mic: { type: "network", host: "listener-03.local" }
+    lens_stack: ["liquid", "feedback"]
+    continuity_mode: "continuity"
+    screens: ["chill-projector", "satellite-remote"]
+
+screens:
+  - id: "wall-north"
+    loop_phase_offset: 0.0
+  - id: "wall-south"
+    loop_phase_offset: 0.5
+  - id: "bar-panel"
+    loop_phase_offset: 0.33
+  - id: "chill-projector"
+    loop_phase_offset: 0.0
+  - id: "satellite-remote"
+    loop_phase_offset: 0.66
+    audio_source: "local_mic"   # remote room reacts to its own sound
+
+privacy:
+  ring_buffer_minutes: 5
+  signage_required: true
+
+serving:
+  bind: "0.0.0.0:8420"
+  public_tunnel: true
+  password_env: "EGREGORE_PARTY_PASSWORD"
