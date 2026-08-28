@@ -25,11 +25,14 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from egregore.config.schema import WeaverConfig
 from egregore.types import MoodState, ThemeObject
+
+from .validator import char_runs, normalize_words, word_ngrams
 
 __all__ = [
     "Abstractor",
@@ -223,6 +226,10 @@ DEFAULT_ELEMENTAL: tuple[str, ...] = ("muted spectrum", "haze", "slow light")
 
 REGISTERS: tuple[str, ...] = ("elegiac", "exuberant", "contemplative", "tense", "ambient")
 
+# Two words, ten characters: too short to trip either overlap check, so it is
+# always a legal movement no matter what was said in the room.
+SAFE_MOVEMENT = "slow drift"
+
 MOVEMENTS: tuple[str, ...] = (
     "held nearly still",
     "slow drift",
@@ -295,6 +302,37 @@ def _rotate(items: list[str], offset: int) -> list[str]:
     return items[k:] + items[:k]
 
 
+def _collision_filter(window_text: str) -> Callable[[str], bool]:
+    """Build a predicate: would this lexicon phrase trip the validator?
+
+    Uses the validator's own normalization so the two can never drift apart.
+    Only the *phrase* is inspected; nothing from the window is retained.
+    """
+    ref_ngrams = word_ngrams(normalize_words(window_text))
+    ref_runs = char_runs(window_text)
+
+    def collides(phrase: str) -> bool:
+        if ref_ngrams and word_ngrams(normalize_words(phrase)) & ref_ngrams:
+            return True
+        return bool(ref_runs and char_runs(phrase) & ref_runs)
+
+    return collides
+
+
+def _select(
+    pool: list[str],
+    defaults: tuple[str, ...],
+    collides: Callable[[str], bool],
+    attempt: int,
+    limit: int,
+) -> list[str]:
+    """Take up to ``limit`` non-colliding phrases, backfilling from defaults."""
+    chosen = [item for item in _dedupe(pool) if not collides(item)][:limit]
+    if not chosen:
+        chosen = [item for item in _rotate(list(defaults), attempt) if not collides(item)][:limit]
+    return chosen
+
+
 def _register_for(valence: float, intensity: float) -> str:
     if intensity >= 0.6 and valence < 0.4:
         return "tense"
@@ -335,23 +373,30 @@ class HeuristicAbstractor:
     ) -> ThemeObject:
         words = _WORD_RE.findall(window_text.lower())
         counts = self._score_clusters(words)
+        # Someone in the room may happen to *say* a lexicon phrase. That is a
+        # coincidence, not a leak, but the validator cannot tell the difference
+        # — so drop any candidate that would collide before offering it.
+        collides = _collision_filter(window_text)
 
         motif_pool: list[str] = []
         elemental_pool: list[str] = []
         for cluster, _score in counts:
             motif_pool.extend(_rotate(list(cluster.motifs), attempt))
             elemental_pool.extend(_rotate(list(cluster.elemental), attempt))
-        if not motif_pool:
-            motif_pool = _rotate(list(DEFAULT_MOTIFS), attempt)
-            elemental_pool = _rotate(list(DEFAULT_ELEMENTAL), attempt)
 
-        motifs = _dedupe(motif_pool)[: self.max_motifs]
-        elemental = _dedupe(elemental_pool)[: self.max_elemental]
+        motifs = _select(motif_pool, DEFAULT_MOTIFS, collides, attempt, self.max_motifs)
+        elemental = _select(
+            elemental_pool, DEFAULT_ELEMENTAL, collides, attempt, self.max_elemental
+        )
 
         valence = self._valence(words, mood)
         intensity = self._intensity(words, window_text, mood)
         register = _register_for(valence, intensity)
+        if collides(register):
+            register = "ambient"
         movement = MOVEMENTS[min(int(intensity * len(MOVEMENTS)), len(MOVEMENTS) - 1)]
+        if collides(movement):
+            movement = next((m for m in MOVEMENTS if not collides(m)), SAFE_MOVEMENT)
 
         return ThemeObject(
             motifs=motifs,
@@ -366,7 +411,7 @@ class HeuristicAbstractor:
 
     def _score_clusters(self, words: list[str]) -> list[tuple[ConceptCluster, int]]:
         scored: list[tuple[ConceptCluster, int]] = []
-        for index, cluster in enumerate(CONCEPT_CLUSTERS):
+        for cluster in CONCEPT_CLUSTERS:
             hits = sum(1 for word in words if word in cluster.keywords)
             if hits:
                 scored.append((cluster, hits))

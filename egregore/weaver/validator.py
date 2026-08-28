@@ -27,6 +27,8 @@ __all__ = [
     "SENTENCE_INITIAL_ALLOWLIST",
     "ValidationResult",
     "char_runs",
+    "normalize_chars",
+    "normalize_words",
     "validate_theme",
     "word_ngrams",
 ]
