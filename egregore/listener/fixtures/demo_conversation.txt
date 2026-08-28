@@ -1,0 +1,43 @@
+# Demo conversation fixture for FixtureSource (Architecture §2.1, CONTRACTS.md
+# "Demo mode"). Format: MM:SS<TAB>utterance text. Lines starting with '#' and
+# blank lines are ignored. ~6 minutes, ~30 utterances, party speech drifting
+# across a few thematic arcs: ocean/grandmother memory -> city and work
+# pressure -> night sky wonder -> warmth and togetherness.
+
+# --- arc: ocean / grandmother memory ---
+00:04	Okay wait, put that down for one second, smell this, it's basically the ocean.
+00:11	I'm serious, close your eyes, doesn't it smell like the tide coming in?
+00:19	My grandmother used to keep shells like that in a bowl by the door.
+00:31	Every summer we'd drive out to see her and the whole house smelled like salt and dish soap.
+00:44	She'd stand at the screen door waiting before we even parked the car.
+00:58	I didn't realize how much I missed that until right now, honestly.
+
+# --- arc: city and work pressure ---
+01:12	Okay but speaking of driving, did you see the traffic getting in tonight?
+01:22	I swear this city adds a new bridge closure every single week just to spite me.
+01:34	I had three meetings today that could've been one email, I'm not even exaggerating.
+01:47	My manager keeps saying let's circle back and I want to scream into a pillow.
+02:01	Honestly I think everyone downtown is one bad commute away from just walking into the sea.
+02:15	I keep telling myself I'll quit and open a little bookstore somewhere quiet.
+02:28	You say that every year and then you buy a new monitor instead.
+02:40	Fair, the monitor was very good though.
+02:52	Can we go outside for a second, I need actual air that hasn't been in an elevator.
+
+# --- arc: night sky wonder ---
+03:07	Whoa okay look up, there's actually stars out here tonight.
+03:19	You can't even see them from my apartment, there's too much orange light.
+03:32	I forgot the sky could look like that, like actually deep.
+03:45	Someone told me once the light from some of those stars left before we were born.
+03:58	That kind of messes with my head a little, in a good way.
+04:11	I want to lie down right here and just stare at it for an hour.
+04:24	Careful, the grass is soaked, you'll ruin those pants.
+04:35	Worth it honestly.
+
+# --- arc: warmth and togetherness ---
+04:50	Come here, you're freezing, take my jacket.
+05:02	I love that we still do this, just end up outside at every party somehow.
+05:15	Ten years of knowing each other and we're still finding new roofs to sit on.
+05:28	I mean it, I'm really glad you're all here tonight.
+05:40	To grandmothers and bad commutes and stars we forgot were there.
+05:52	Okay that was surprisingly poetic for someone who just fell in the grass.
+06:03	Shut up and drink your cider.
