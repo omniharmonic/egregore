@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="noindex">
+<title>Egregore — status</title>
+<style>
+  :root {
+    --bg:     #050706;
+    --accent: #33ff66;
+    --dim:    #5d6f64;
+    --dimmer: #33413a;
+    --text:   #b7c9be;
+    --warn:   #ff4d4d;
+    --amber:  #d8a14a;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+            "DejaVu Sans Mono", "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; min-height: 100%;
+    background: var(--bg); color: var(--text);
+    font: 400 13px/1.5 var(--mono);
+    -webkit-font-smoothing: antialiased;
+    font-variant-ligatures: none;
+  }
+  main { padding: 26px 22px 60px; max-width: 1180px; margin: 0 auto; }
+
+  .wordmark {
+    margin: 0; white-space: pre; line-height: 0.88;
+    font-size: clamp(4px, 1.1vw, 10px);
+    color: var(--accent);
+    text-shadow: 0 0 14px rgba(51,255,102,.18);
+    -webkit-user-select: none; user-select: none;
+  }
+
+  .head {
+    display: flex; flex-wrap: wrap; gap: 8px 22px;
+    align-items: flex-end; justify-content: space-between;
+    margin: 12px 0 18px; padding-bottom: 10px;
+    border-bottom: 1px solid var(--dimmer);
+    color: var(--dim);
+  }
+  .head .who { color: var(--accent); }
+
+  .panels { display: flex; flex-wrap: wrap; gap: 18px 26px; align-items: flex-start; }
+  pre.panel {
+    margin: 0; white-space: pre; overflow-x: auto; max-width: 100%;
+    color: var(--dim); line-height: 1.45;
+  }
+  .t    { color: var(--accent); }
+  .v    { color: var(--text); }
+  .bad  { color: var(--warn); }
+  .warn { color: var(--amber); }
+  .off  { color: var(--dimmer); }
+
+  .cursor {
+    display: inline-block; width: .58em; height: 1.02em;
+    background: var(--accent); vertical-align: -.16em; margin-left: .2em;
+    animation: blink 1.06s steps(1, end) infinite;
+  }
+  @keyframes blink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .cursor { animation: none; } }
+
+  /* join veil (401) */
+  #join {
+    position: fixed; inset: 0; z-index: 20; background: rgba(4,7,5,.97);
+    display: flex; align-items: center; justify-content: center;
+  }
+  #join[hidden] { display: none; }
+  #join .term { padding: 0 5vw; display: flex; flex-direction: column; gap: 1.35em; }
+  #join .wordmark { font-size: clamp(5.5px, 2.15vw, 22px); }
+  #joinForm { display: flex; align-items: center; font: inherit; }
+  #joinForm .label { color: var(--dim); white-space: pre; }
+  #joinPass {
+    font: inherit; color: var(--accent); background: transparent;
+    border: 0; outline: none; padding: 0; caret-color: transparent; width: 1ch;
+  }
+  #joinErr { color: var(--warn); min-height: 1.5em; }
+  .rule { height: 1px; background: var(--dimmer); }
+</style>
+</head>
+<body>
+<main>
+<pre class="wordmark" role="img" aria-label="EGREGORE">████ ████ ███  ████ ████ ████ ███  ████
+█    █    █  █ █    █    █  █ █  █ █
+███  █ ██ ███  ███  █ ██ █  █ ███  ███
+█    █  █ █ █  █    █  █ █  █ █ █  █
+████ ████ █  █ ████ ████ ████ █  █ ████</pre>
+
+  <div class="head">
+    <div><span class="who" id="party">—</span> <span id="subtitle">operator status</span></div>
+    <div id="link">connecting<span class="cursor"></span></div>
+  </div>
+
+  <div class="panels" id="panels"></div>
+</main>
+
+<div id="join" hidden>
+  <div class="term">
+<pre class="wordmark" role="img" aria-label="EGREGORE">████ ████ ███  ████ ████ ████ ███  ████
+█    █    █  █ █    █    █  █ █  █ █
+███  █ ██ ███  ███  █ ██ █  █ ███  ███
+█    █  █ █ █  █    █  █ █  █ █ █  █
+████ ████ █  █ ████ ████ ████ █  █ ████</pre>
+    <div class="rule"></div>
+    <form id="joinForm" autocomplete="off">
+      <span class="label">party password: </span><input id="joinPass" type="password" aria-label="Party password" autocomplete="current-password" spellcheck="false"><span class="cursor"></span>
+    </form>
+    <div id="joinErr" role="status" aria-live="polite"></div>
+  </div>
+</div>
+
+<script>
+// status.html — terminal operator dashboard. Vanilla, no dependencies, and no
+// assumptions about which fields /api/status happens to carry: every read goes
+// through get()/num()/str(), so a payload from a partially-wired party renders
+// as em-dashes rather than as a stack trace.
+(function () {
+  'use strict';
+
+  var POLL_MS = 2000;
+  var $ = function (id) { return document.getElementById(id); };
+  var els = {
+    panels: $('panels'), party: $('party'), link: $('link'), subtitle: $('subtitle'),
+    join: $('join'), joinForm: $('joinForm'), joinPass: $('joinPass'), joinErr: $('joinErr'),
+  };
+
+  // -- tiny helpers --------------------------------------------------------
+
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c];
+    });
+  }
+  function get(o, path, dflt) {
+    var cur = o;
+    var parts = path.split('.');
+    for (var i = 0; i < parts.length; i++) {
+      if (cur == null || typeof cur !== 'object') return dflt;
+      cur = cur[parts[i]];
+    }
+    return cur === undefined || cur === null ? dflt : cur;
+  }
+  function num(v, dflt) {
+    var n = typeof v === 'string' ? parseFloat(v) : v;
+    return (typeof n === 'number' && isFinite(n)) ? n : dflt;
+  }
+  function str(v) {
+    if (v === undefined || v === null || v === '') return '—';
+    return String(v);
+  }
+  function money(v) {
+    var n = num(v, null);
+    return n === null ? str(v) : n.toFixed(2);
+  }
+  function pad(s, w) {
+    s = String(s);
+    return s.length >= w ? s : s + new Array(w - s.length + 1).join(' ');
+  }
+  function padL(s, w) {
+    s = String(s);
+    return s.length >= w ? s : new Array(w - s.length + 1).join(' ') + s;
+  }
+  function rep(ch, n) { return n > 0 ? new Array(n + 1).join(ch) : ''; }
+
+  // Timestamps: unix-epoch values are rendered relative to the browser clock;
+  // anything smaller is a monotonic reading we cannot anchor, so it is shown
+  // as-is rather than as a wrong-looking duration.
+  function when(v, future) {
+    var n = num(v, null);
+    if (n === null) return '—';
+    if (n < 1e9) return 't+' + n.toFixed(0);
+    var d = (future ? n - Date.now() / 1000 : Date.now() / 1000 - n);
+    if (d < 0) d = 0;
+    var s = d < 90 ? d.toFixed(0) + 's'
+          : d < 5400 ? (d / 60).toFixed(1) + 'm'
+          : (d / 3600).toFixed(1) + 'h';
+    return future ? 'in ' + s : s + ' ago';
+  }
+
+  function bar(frac, width) {
+    frac = Math.max(0, Math.min(1, num(frac, 0)));
+    var full = Math.round(frac * width);
+    return rep('█', full) + rep('·', width - full);
+  }
+
+  // -- box-drawn panels ----------------------------------------------------
+  // Lines are {t: plain text, c: css class}. Width is measured on the plain
+  // text so alignment survives whatever colouring is applied on top.
+
+  function panel(title, lines) {
+    var w = title.length + 1;
+    var i;
+    for (i = 0; i < lines.length; i++) w = Math.max(w, lines[i].t.length);
+    var out = '<span class="off">┌─</span> <span class="t">' + esc(title) + '</span> ' +
+              '<span class="off">' + rep('─', w - title.length - 1) + '┐</span>\n';
+    for (i = 0; i < lines.length; i++) {
+      var cls = lines[i].c ? ' class="' + lines[i].c + '"' : '';
+      out += '<span class="off">│</span> <span' + cls + '>' +
+             esc(pad(lines[i].t, w)) + '</span> <span class="off">│</span>\n';
+    }
+    out += '<span class="off">└' + rep('─', w + 2) + '┘</span>';
+    return '<pre class="panel">' + out + '</pre>';
+  }
+
+  // -- panels --------------------------------------------------------------
+
+  function spendPanel(d) {
+    var g = get(d, 'governor', null);
+    if (!g) return panel('spend', [{ t: 'no governor in this payload', c: 'off' }]);
+
+    var ceiling = num(g.ceiling, 0);
+    var committed = num(g.committed, 0);
+    var reserved = num(g.reserved, 0);
+    var projected = num(g.projected_total, committed + reserved);
+    var remaining = num(g.remaining, ceiling - projected);
+    var frac = ceiling > 0 ? projected / ceiling : 0;
+    var overrun = g.overrun_detected === true;
+
+    var lines = [
+      { t: 'ceiling    ' + padL(money(g.ceiling), 10) },
+      { t: 'committed  ' + padL(money(g.committed), 10), c: 'v' },
+      { t: 'reserved   ' + padL(money(g.reserved), 10) +
+           '   (' + str(g.active_reservations) + ' active)' },
+      { t: 'projected  ' + padL(money(projected), 10) +
+           '   ' + (ceiling > 0 ? (frac * 100).toFixed(1) + '% of ceiling' : ''),
+        c: overrun ? 'bad' : frac > 0.85 ? 'warn' : 'v' },
+      { t: 'remaining  ' + padL(money(remaining), 10),
+        c: remaining <= 0 ? 'bad' : '' },
+      { t: '' },
+      { t: '[' + bar(frac, 34) + ']',
+        c: overrun || frac >= 1 ? 'bad' : frac > 0.85 ? 'warn' : 'v' },
+      { t: '' },
+      { t: 'party      ' + (num(g.party_frac, 0) * 100).toFixed(1) + '% elapsed' +
+           '   rate ' + num(g.curve_rate, 0).toFixed(3) },
+      { t: 'ledger     ' + str(g.entry_count) + ' entries' },
+    ];
+    if (overrun) lines.push({ t: 'OVERRUN DETECTED', c: 'bad' });
+    return panel('spend', lines);
+  }
+
+  function zonesPanel(d) {
+    var zones = get(d, 'zones', {});
+    var names = Object.keys(zones || {});
+    var byZone = get(d, 'screens_connected_by_zone', {}) || {};
+    if (!names.length) return panel('zones', [{ t: 'no zones reporting', c: 'off' }]);
+
+    var W = { zone: 10, mode: 12, q: 5, scr: 4, clip: 6, chain: 7, buf: 9 };
+    var lines = [{
+      t: pad('zone', W.zone) + pad('mode', W.mode) + padL('queue', W.q) + ' ' +
+         padL('scr', W.scr) + ' ' + padL('clips', W.clip) + ' ' +
+         padL('chain', W.chain) + ' ' + padL('buffer', W.buf) + '  state',
+      c: 'off',
+    }];
+
+    for (var i = 0; i < names.length; i++) {
+      var z = zones[names[i]] || {};
+      var q = num(z.queue_depth, 0);
+      var muted = z.muted === true;
+      var chain = str(z.current_chain_length) + '/' + str(z.max_chain_length);
+      var buf = str(z.buffer_fragments) + 'f';
+      var flags = [];
+      if (muted) flags.push('MUTED');
+      if (z.has_last_frame === false) flags.push('no seed');
+      var cls = '';
+      if (q >= 4) { cls = 'bad'; flags.push('BACKLOG'); }
+      else if (muted) cls = 'warn';
+      else if (q > 0) cls = 'v';
+
+      lines.push({
+        t: pad(str(z.zone || names[i]), W.zone) + pad(str(z.mode), W.mode) +
+           padL(String(q), W.q) + ' ' +
+           padL(str(byZone[names[i]] !== undefined ? byZone[names[i]] : '—'), W.scr) + ' ' +
+           padL(str(z.active_clip_count !== undefined ? z.active_clip_count : z.clip_count), W.clip) + ' ' +
+           padL(chain, W.chain) + ' ' + padL(buf, W.buf) + '  ' + flags.join(' '),
+        c: cls,
+      });
+    }
+
+    // Cadence, from the governor's per-zone view, aligned under the same names.
+    var gz = get(d, 'governor.zones', null);
+    if (gz && Object.keys(gz).length) {
+      lines.push({ t: '' });
+      lines.push({ t: pad('cadence', W.zone) + pad('last gen', 12) + pad('next', 14) + 'interval', c: 'off' });
+      var gnames = Object.keys(gz);
+      for (var j = 0; j < gnames.length; j++) {
+        var c = gz[gnames[j]] || {};
+        lines.push({
+          t: pad(gnames[j], W.zone) + pad(when(c.last_generation_at, false), 12) +
+             pad(when(c.next_eligible_at, true), 14) +
+             (num(c.interval_s, null) === null ? '—' : num(c.interval_s, 0).toFixed(0) + 's'),
+        });
+      }
+    }
+    return panel('zones', lines);
+  }
+
+  function backendsPanel(d) {
+    var b = get(d, 'backends', null);
+    if (!b || !b.length) return panel('backends', [{ t: 'none configured', c: 'bad' }]);
+    var lines = [];
+    for (var i = 0; i < b.length; i++) {
+      var e = b[i];
+      // Accepts both shapes: a bare name, or an object carrying health.
+      var name = typeof e === 'string' ? e : str(get(e, 'name', '?'));
+      var st = typeof e === 'string' ? 'ready'
+             : (e.healthy === false || e.state === 'down') ? 'DOWN'
+             : str(get(e, 'state', 'ready'));
+      var down = /^down$/i.test(st) || /fail/i.test(st);
+      lines.push({
+        t: padL(String(i + 1), 2) + '. ' + pad(name, 16) + st,
+        c: down ? 'bad' : i === 0 ? 'v' : '',
+      });
+    }
+    lines.push({ t: '' });
+    lines.push({ t: 'ladder order is failover order', c: 'off' });
+    return panel('backends', lines);
+  }
+
+  function privacyPanel(d) {
+    var p = get(d, 'privacy', null) || {};
+    var onDisk = num(p.transcripts_on_disk, 0);
+    var lines = [
+      { t: 'retained            ' + str(p.retained), c: /nothing/i.test(str(p.retained)) ? 'v' : 'warn' },
+      { t: 'transcripts on disk ' + padL(String(onDisk), 6), c: onDisk > 0 ? 'bad' : 'v' },
+      { t: 'ring buffer         ' + padL(str(p.ring_buffer_minutes), 6) + ' min' },
+      { t: 'prompts sent        ' + padL(str(p.prompts_sent), 6) },
+    ];
+    var zones = get(d, 'zones', {}) || {};
+    var names = Object.keys(zones);
+    var rej = 0, purge = 0, tok = 0, any = false;
+    for (var i = 0; i < names.length; i++) {
+      var z = zones[names[i]] || {};
+      if (z.validator_rejections !== undefined) { rej += num(z.validator_rejections, 0); any = true; }
+      if (z.purges !== undefined) { purge += num(z.purges, 0); any = true; }
+      if (z.buffer_tokens !== undefined) { tok += num(z.buffer_tokens, 0); any = true; }
+    }
+    if (any) {
+      lines.push({ t: '' });
+      lines.push({ t: 'validator rejects   ' + padL(String(rej), 6) });
+      lines.push({ t: 'purges requested    ' + padL(String(purge), 6), c: purge > 0 ? 'warn' : '' });
+      lines.push({ t: 'tokens in buffers   ' + padL(String(tok), 6) });
+    }
+    return panel('privacy', lines);
+  }
+
+  function screensPanel(d) {
+    var n = num(get(d, 'screens_connected', null), null);
+    var byZone = get(d, 'screens_connected_by_zone', {}) || {};
+    var names = Object.keys(byZone);
+    var lines = [{ t: 'connected  ' + padL(n === null ? '—' : String(n), 5), c: n === 0 ? 'warn' : 'v' }];
+    if (names.length) lines.push({ t: '' });
+    for (var i = 0; i < names.length; i++) {
+      lines.push({ t: pad(names[i], 12) + padL(str(byZone[names[i]]), 4) });
+    }
+    return panel('screens', lines);
+  }
+
+  // -- render / poll -------------------------------------------------------
+
+  var failures = 0;
+
+  // The two numbers an operator glances at before anything else: what has been
+  // spent and how deep the queues are. They get their own line above the fold
+  // as well as their panels, and go red on overrun or a real backlog.
+  function headline(d) {
+    var g = get(d, 'governor', {}) || {};
+    var ceiling = num(g.ceiling, null);
+    var projected = num(g.projected_total, num(g.committed, null));
+    var zones = get(d, 'zones', {}) || {};
+    var q = 0, worst = 0, names = Object.keys(zones);
+    for (var i = 0; i < names.length; i++) {
+      var qd = num((zones[names[i]] || {}).queue_depth, 0);
+      q += qd;
+      if (qd > worst) worst = qd;
+    }
+    var overrun = g.overrun_detected === true;
+    var spend = (projected === null ? '—' : money(projected)) +
+                (ceiling === null ? '' : ' / ' + money(ceiling));
+    return '<span class="' + (overrun ? 'bad' : 'v') + '">spend ' + esc(spend) + '</span>' +
+      '<span class="off"> · </span>' +
+      // Total and worst-zone depth both, because the red is keyed to the worst
+      // zone and a bare total would leave an operator guessing which it meant.
+      '<span class="' + (worst >= 4 ? 'bad' : 'v') + '">queued ' + esc(String(q)) +
+      (names.length > 1 ? ' · deepest ' + esc(String(worst)) : '') + '</span>' +
+      '<span class="off"> · </span>' +
+      '<span class="v">screens ' + esc(str(get(d, 'screens_connected', '—'))) + '</span>';
+  }
+
+  function render(d) {
+    els.party.textContent = str(get(d, 'party', 'egregore'));
+    els.subtitle.innerHTML = '<span class="off">operator · </span>' + headline(d);
+    els.panels.innerHTML =
+      spendPanel(d) + zonesPanel(d) + backendsPanel(d) + privacyPanel(d) + screensPanel(d);
+  }
+
+  function setLink(text, bad) {
+    els.link.innerHTML = '<span class="' + (bad ? 'bad' : 'v') + '">' + esc(text) +
+      '</span><span class="cursor"></span>';
+    els.link.style.color = '';
+  }
+
+  async function poll() {
+    try {
+      var r = await fetch('/api/status', {
+        credentials: 'same-origin', headers: { accept: 'application/json' },
+      });
+      if (r.status === 401 || r.status === 403) { showJoin(); setLink('locked', true); return; }
+      if (!r.ok) { failures++; setLink('http ' + r.status + ' (' + failures + ')', true); return; }
+      var d = await r.json();
+      failures = 0;
+      hideJoin();
+      render(d);
+      var t = new Date();
+      var two = function (n) { return ('0' + n).slice(-2); };
+      setLink('linked ' + two(t.getHours()) + ':' + two(t.getMinutes()) + ':' + two(t.getSeconds()), false);
+    } catch (e) {
+      failures++;
+      setLink('link down (' + failures + ')', true);
+    }
+  }
+
+  // -- auth ----------------------------------------------------------------
+
+  function showJoin() {
+    if (!els.join.hidden) return;
+    els.join.hidden = false;
+    sizePass();
+    setTimeout(function () { try { els.joinPass.focus(); } catch (e) { /* */ } }, 60);
+  }
+  function hideJoin() {
+    if (els.join.hidden) return;
+    els.join.hidden = true;
+    els.joinPass.value = '';
+    sizePass();
+  }
+  function sizePass() {
+    els.joinPass.style.width = Math.max(1, els.joinPass.value.length) + 'ch';
+  }
+  els.joinPass.addEventListener('input', sizePass);
+
+  els.joinForm.addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    els.joinErr.textContent = '';
+    try {
+      var r = await fetch('/api/join', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ password: els.joinPass.value }),
+      });
+      if (!r.ok) { els.joinErr.textContent = 'denied.'; return; }
+      hideJoin();
+      poll();
+    } catch (e) {
+      els.joinErr.textContent = 'no route to host.';
+    }
+  });
+
+  // Nothing below is allowed to take the dashboard down.
+  window.addEventListener('error', function (e) { console.warn('[status]', e && e.message); });
+  window.addEventListener('unhandledrejection', function (e) {
+    console.warn('[status]', e && e.reason && e.reason.message);
+  });
+
+  poll();
+  setInterval(poll, POLL_MS);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });
+})();
+</script>
+</body>
+</html>

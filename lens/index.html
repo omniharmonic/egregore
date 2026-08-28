@@ -6,13 +6,22 @@
 <meta name="color-scheme" content="dark">
 <title>Egregore</title>
 <style>
-  :root { --ink: #e8e4dc; }
+  :root {
+    --bg:     #050706;
+    --accent: #33ff66;
+    --dim:    #5d6f64;
+    --dimmer: #33413a;
+    --warn:   #ff4d4d;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+            "DejaVu Sans Mono", "Liberation Mono", monospace;
+  }
   * { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0; width: 100%; height: 100%;
-    background: #000; color: var(--ink); overflow: hidden;
-    font: 400 14px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--dim); overflow: hidden;
+    font: 400 13px/1.55 var(--mono);
     -webkit-font-smoothing: antialiased;
+    font-variant-ligatures: none;
   }
   body { cursor: none; }
   body.ui { cursor: default; }
@@ -37,56 +46,86 @@
   }
   body.nogl #gl { display: none; }
 
+  /* ---- chrome: a terminal laid over the artwork, never beside it -------- */
+
   .veil {
     position: fixed; inset: 0; z-index: 20;
-    display: flex; align-items: center; justify-content: center; flex-direction: column;
-    gap: 22px; opacity: 1;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 1;
     /* A scrim, not a curtain: the dream is already running behind it. */
-    background: radial-gradient(ellipse at center,
-                rgba(0,0,0,.42) 0%, rgba(0,0,0,.72) 55%, rgba(0,0,0,.92) 100%);
-    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    background:
+      radial-gradient(ellipse at center,
+        rgba(4,7,5,.62) 0%, rgba(4,7,5,.86) 55%, rgba(4,7,5,.97) 100%);
+    -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
     transition: opacity 900ms ease;
   }
-  #join { background: rgba(0,0,0,.88); }
+  #join { background: rgba(4,7,5,.94); }
   .veil[hidden] { display: none; }
   .veil.out { opacity: 0; pointer-events: none; }
 
-  .mark {
-    width: 64px; height: 64px; border-radius: 50%;
-    border: 1px solid rgba(232,228,220,.28);
-    box-shadow: 0 0 60px rgba(232,228,220,.06) inset;
-    animation: breathe 5.5s ease-in-out infinite;
+  .term {
+    padding: 0 5vw; max-width: 100%;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 1.35em;
   }
-  @keyframes breathe {
-    0%,100% { transform: scale(1);    opacity: .55; }
-    50%     { transform: scale(1.12); opacity: .95; }
-  }
-  .word {
-    letter-spacing: .42em; text-transform: uppercase; font-size: 11px;
-    color: rgba(232,228,220,.5); padding-left: .42em;
-  }
-  .hint { font-size: 11px; color: rgba(232,228,220,.28); letter-spacing: .16em; text-transform: uppercase; }
 
-  #join form { display: flex; gap: 8px; }
-  #join input, #join button {
-    font: inherit; font-size: 13px; letter-spacing: .08em;
-    background: rgba(255,255,255,.045); color: var(--ink);
-    border: 1px solid rgba(232,228,220,.18); border-radius: 2px;
-    padding: 10px 14px; outline: none;
+  .wordmark {
+    margin: 0; white-space: pre; line-height: 0.88;
+    font-size: clamp(5.5px, 2.15vw, 25px);
+    color: var(--accent);
+    text-shadow: 0 0 18px rgba(51,255,102,.20);
+    -webkit-user-select: none; user-select: none;
   }
-  #join input:focus { border-color: rgba(232,228,220,.45); }
-  #join button { cursor: pointer; background: rgba(255,255,255,.08); }
-  #join button:hover { background: rgba(255,255,255,.14); }
-  #joinErr { font-size: 11px; color: #d98b7a; min-height: 1em; letter-spacing: .1em; }
+  .wordmark.small { font-size: clamp(4.5px, 1.05vw, 11px); }
+
+  .rule {
+    width: 100%; height: 1px; background: var(--dimmer); opacity: .8;
+  }
+
+  /* Four lines reserved up front (4 x 1.55 line-height), so the prompt below
+     does not walk down the screen as the log types itself in. */
+  .log { margin: 0; white-space: pre-wrap; color: var(--dim); min-height: 6.2em; }
+
+  .prompt { color: var(--dim); }
+  .prompt .user { color: var(--accent); }
+  .prompt .path { color: var(--dim); }
+  .prompt .cmd  { color: #cfe8d8; }
+
+  .cursor {
+    display: inline-block; width: .58em; height: 1.02em;
+    background: var(--accent); vertical-align: -.16em;
+    margin-left: .12em;
+    animation: blink 1.06s steps(1, end) infinite;
+  }
+  @keyframes blink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .cursor { animation: none; } }
+
+  .hint { color: var(--dimmer); letter-spacing: .06em; }
+  .hint::before { content: "  "; }
+
+  /* ---- password veil --------------------------------------------------- */
+
+  #joinForm { display: flex; align-items: center; gap: 0; font: inherit; }
+  #joinForm .label { color: var(--dim); white-space: pre; }
+  #joinPass {
+    font: inherit; color: var(--accent);
+    background: transparent; border: 0; outline: none; padding: 0;
+    caret-color: transparent; width: 1ch; min-width: 1ch;
+    letter-spacing: 0;
+  }
+  #joinErr { color: var(--warn); min-height: 1.5em; }
+  #joinErr::before { content: ""; }
+
+  /* ---- HUD ------------------------------------------------------------- */
 
   #hud {
-    position: fixed; left: 10px; top: 10px; z-index: 30;
-    font: 400 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    color: rgba(232,228,220,.72); background: rgba(0,0,0,.45);
-    border: 1px solid rgba(232,228,220,.12); border-radius: 3px;
-    padding: 7px 9px; white-space: pre; pointer-events: none;
+    position: fixed; left: 12px; top: 12px; z-index: 30;
+    margin: 0; font: 400 11px/1.4 var(--mono);
+    color: var(--dim); background: rgba(4,7,5,.62);
+    padding: 6px 8px; white-space: pre; pointer-events: none;
+    text-shadow: 0 0 10px rgba(51,255,102,.10);
   }
   #hud[hidden] { display: none; }
+  #hud .accent { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -95,22 +134,36 @@
   <video id="vidA" class="src" muted playsinline autoplay loop preload="auto" disablepictureinpicture></video>
   <video id="vidB" class="src" muted playsinline autoplay loop preload="auto" disablepictureinpicture></video>
 
-  <!-- Tap-to-enter: requests fullscreen, but the render runs regardless. -->
+  <!-- Boot scrim. Tap-to-enter requests fullscreen, but the render runs
+       regardless — this is chrome over a picture that is already live. -->
   <div class="veil" id="enter">
-    <div class="mark"></div>
-    <div class="word">Egregore</div>
-    <div class="hint">tap to enter</div>
+    <div class="term">
+<pre class="wordmark" role="img" aria-label="EGREGORE">████ ████ ███  ████ ████ ████ ███  ████
+█    █    █  █ █    █    █  █ █  █ █
+███  █ ██ ███  ███  █ ██ █  █ ███  ███
+█    █  █ █ █  █    █  █ █  █ █ █  █
+████ ████ █  █ ████ ████ ████ █  █ ████</pre>
+      <div class="rule"></div>
+      <pre class="log" id="bootLog"></pre>
+      <div class="prompt" id="enterPrompt" hidden><span class="user">guest@egregore</span>:<span class="path">~</span>$ <span class="cmd">join</span><span class="cursor"></span></div>
+      <div class="hint" id="enterHint" hidden>press any key &middot; tap to enter</div>
+    </div>
   </div>
 
   <!-- Password veil: only shown on 401. -->
   <div class="veil" id="join" hidden>
-    <div class="mark"></div>
-    <div class="word">Egregore</div>
-    <form id="joinForm" autocomplete="off">
-      <input id="joinPass" type="password" placeholder="password" aria-label="Party password" autocomplete="current-password">
-      <button type="submit">enter</button>
-    </form>
-    <div id="joinErr"></div>
+    <div class="term">
+<pre class="wordmark small" role="img" aria-label="EGREGORE">████ ████ ███  ████ ████ ████ ███  ████
+█    █    █  █ █    █    █  █ █  █ █
+███  █ ██ ███  ███  █ ██ █  █ ███  ███
+█    █  █ █ █  █    █  █ █  █ █ █  █
+████ ████ █  █ ████ ████ ████ █  █ ████</pre>
+      <div class="rule"></div>
+      <form id="joinForm" autocomplete="off">
+        <span class="label">party password: </span><input id="joinPass" type="password" aria-label="Party password" autocomplete="current-password" spellcheck="false"><span class="cursor"></span>
+      </form>
+      <div id="joinErr" role="status" aria-live="polite"></div>
+    </div>
   </div>
 
   <pre id="hud" hidden></pre>

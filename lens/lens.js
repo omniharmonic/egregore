@@ -11,7 +11,13 @@ import { Renderer } from './gl.js';
 import { Features } from './audio.js';
 import { Playlist, Deck, ClipCache, safeJson } from './media.js';
 
-const KNOWN_LENSES = ['feedback', 'kaleidoscope', 'flow', 'chroma', 'bloom', 'liquid'];
+// Every lens the client will accept from /api/config or ?stack=. An unknown
+// name is dropped here rather than trusted; a known name whose .frag never
+// arrives or fails to compile is dropped later, in loadShaders().
+const KNOWN_LENSES = [
+  'feedback', 'kaleidoscope', 'flow', 'chroma', 'bloom', 'liquid',
+  'glitch', 'pixelsort', 'crt', 'corrupt',
+];
 const DEFAULT_STACK = ['flow', 'feedback', 'bloom'];
 const DEFAULT_CROSSFADE = 2;
 const MANIFEST_POLL_MS = 30000;
@@ -29,6 +35,7 @@ const el = {
   canvas: $('gl'), vidA: $('vidA'), vidB: $('vidB'),
   enter: $('enter'), join: $('join'), joinForm: $('joinForm'),
   joinPass: $('joinPass'), joinErr: $('joinErr'), hud: $('hud'),
+  bootLog: $('bootLog'), enterPrompt: $('enterPrompt'), enterHint: $('enterHint'),
 };
 
 const state = {
@@ -57,6 +64,7 @@ function showJoin() {
   el.join.hidden = false;
   el.join.classList.remove('out');
   document.body.classList.add('ui');
+  sizePass();
   setTimeout(() => { try { el.joinPass.focus(); } catch { /* */ } }, 60);
 }
 
@@ -66,6 +74,15 @@ function hideJoin() {
   document.body.classList.remove('ui');
   setTimeout(() => { el.join.hidden = true; }, 950);
 }
+
+// The password field carries no native caret (the block cursor beside it is
+// the caret), so its width has to track the value or the cursor drifts.
+function sizePass() {
+  if (!el.joinPass) return;
+  const n = Math.max(1, el.joinPass.value.length);
+  el.joinPass.style.width = `${n}ch`;
+}
+if (el.joinPass) el.joinPass.addEventListener('input', sizePass);
 
 el.joinForm.addEventListener('submit', async (ev) => {
   ev.preventDefault();
@@ -77,13 +94,14 @@ el.joinForm.addEventListener('submit', async (ev) => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ password }),
     });
-    if (!r.ok) { el.joinErr.textContent = 'not this one'; return; }
+    if (!r.ok) { el.joinErr.textContent = 'denied.'; return; }
     el.joinPass.value = '';
+    sizePass();
     hideJoin();
     await bootstrapData();          // retry everything now that we have a cookie
     if (features) { features.retry = 0; }
   } catch {
-    el.joinErr.textContent = 'no answer';
+    el.joinErr.textContent = 'no route to host.';
   }
 });
 
@@ -91,8 +109,73 @@ el.joinForm.addEventListener('submit', async (ev) => {
 // Enter overlay — fullscreen is offered, never required
 // ---------------------------------------------------------------------------
 
+// --- boot log ---------------------------------------------------------------
+// Four lines of quiet status, typed out. Each line's value is resolved at the
+// moment it is typed rather than up front, so the log reports what is actually
+// true by then — a slow or absent server shows "waiting", not a lie, and never
+// delays the scrim. Nothing here is allowed to hold the enter overlay open.
+
+const LABEL_W = 8;
+const BOOT_LINES = [
+  ['zone', () => ZONE + (SCREEN ? `/${SCREEN}` : '')],
+  ['stack', () => state.stack.join('>') || 'none'],
+  ['render', () => (state.glOk ? 'webgl2' : document.body.classList.contains('nogl') ? 'video (no webgl2)' : 'probing')],
+  ['server', () => {
+    if (playlist && playlist.ok) return `linked · ${playlist.entries.length} clips`;
+    if (state.authPending) return 'locked';
+    return 'waiting';
+  }],
+];
+
+let bootTimer = 0;
+
+function bootDone() {
+  if (bootTimer) { clearTimeout(bootTimer); bootTimer = 0; }
+  if (el.enterPrompt) el.enterPrompt.hidden = false;
+  if (el.enterHint) el.enterHint.hidden = false;
+}
+
+const CHAR_MS = 7, LINE_GAP_MS = 80, TICK_MS = 16;
+
+function typeBoot() {
+  if (!el.bootLog) { bootDone(); return; }
+  let li = 0, text = '', line = '', at = 0;
+  const step = () => {
+    bootTimer = 0;
+    if (el.enter.hidden || el.enter.classList.contains('out')) return;
+    if (li >= BOOT_LINES.length) { bootDone(); return; }
+
+    const now = performance.now();
+    if (at === 0) {
+      // Latch the value once per line: re-reading it per character would let a
+      // line change length while it is being typed.
+      const [label, get] = BOOT_LINES[li];
+      let value = 'waiting';
+      try { value = String(get()); } catch { /* keep the placeholder */ }
+      line = `${label} ${'.'.repeat(Math.max(1, LABEL_W - label.length))} ${value}`;
+      at = now;
+    }
+
+    // Advance by elapsed time, not by one character per tick. The renderer can
+    // be several frames behind on a weak GPU, and a per-tick typewriter there
+    // crawls — the log must finish on schedule regardless of frame rate.
+    const ci = Math.floor((now - at) / CHAR_MS);
+    if (ci >= line.length) {
+      text += line + '\n';
+      el.bootLog.textContent = text;
+      li++; at = 0;
+      bootTimer = setTimeout(step, LINE_GAP_MS);
+      return;
+    }
+    el.bootLog.textContent = text + line.slice(0, ci);
+    bootTimer = setTimeout(step, TICK_MS);
+  };
+  step();
+}
+
 function dismissEnter(requestFs) {
   if (el.enter.classList.contains('out')) return;
+  bootDone();
   el.enter.classList.add('out');
   setTimeout(() => { el.enter.hidden = true; }, 1000);
   if (requestFs && document.documentElement.requestFullscreen && !document.fullscreenElement) {
@@ -349,6 +432,16 @@ function governPasses(now) {
 // HUD
 // ---------------------------------------------------------------------------
 
+/** Wrap fixed-width lines in a box-drawing frame with the title in the rule. */
+function boxed(title, lines) {
+  let w = title.length + 1;
+  for (const l of lines) w = Math.max(w, l.length);
+  const top = `┌─ ${title} ` + '─'.repeat(w - title.length - 1) + '┐';
+  const bot = '└' + '─'.repeat(w + 2) + '┘';
+  const body = lines.map((l) => `│ ${l.padEnd(w)} │`);
+  return [top, ...body, bot].join('\n');
+}
+
 let hudAt = 0;
 function updateHud() {
   const now = performance.now();
@@ -358,18 +451,34 @@ function updateHud() {
   const mb = (cache.bytes / 1e6).toFixed(0);
   const budget = (CACHE_BYTES / 1e6).toFixed(0);
   const cid = deck ? (deck.clipId[deck.active] || '-') : '-';
-  el.hud.textContent =
-    `egregore lens  zone=${ZONE}${SCREEN ? ' screen=' + SCREEN : ''}\n` +
-    `fps ${state.fps.toFixed(1)}  frame ${state.emaMs.toFixed(1)}ms\n` +
-    `passes ${state.passes} (lens ${state.activePasses}/${state.stack.length})\n` +
-    `stack ${state.stack.join('>') || '-'}\n` +
-    `clip ${cid}  mix ${(deck ? deck.mix : 0).toFixed(2)}${deck && deck.fading ? ' ~fade' : ''}\n` +
-    `feat ${features ? features.state : '-'}${features && features.local ? ' (mic)' : ''}  ` +
-    `manifest ${state.manifestState} r${playlist ? playlist.revision : '-'}\n` +
-    `clips ${playlist ? playlist.entries.length : 0}  cache ${mb}/${budget}MB` +
-    `${deck && deck.offline ? '  OFFLINE' : ''}\n` +
-    `gov over ${state.overBudgetSince ? ((now - state.overBudgetSince) / 1000).toFixed(1) : '-'}s  ` +
-    `under ${state.underBudgetSince ? ((now - state.underBudgetSince) / 1000).toFixed(1) : '-'}s`;
+  const over = state.overBudgetSince ? ((now - state.overBudgetSince) / 1000).toFixed(1) + 's' : '-';
+  const under = state.underBudgetSince ? ((now - state.underBudgetSince) / 1000).toFixed(1) + 's' : '-';
+  const text = boxed(`lens ${ZONE}${SCREEN ? '/' + SCREEN : ''}`, [
+    `fps     ${state.fps.toFixed(1).padStart(5)}   frame ${state.emaMs.toFixed(1)}ms`,
+    `passes  ${String(state.passes).padStart(5)}   lens  ${state.activePasses}/${state.stack.length}`,
+    // Whole stack, with a bar at the governor's cut: an operator needs to see
+    // which passes were shed, not just how many.
+    `stack   ${state.stack.slice(0, state.activePasses).join('>') || '-'}` +
+      (state.activePasses < state.stack.length
+        ? ` ┊ ${state.stack.slice(state.activePasses).join('>')}` : ''),
+    `clip    ${cid}  mix ${(deck ? deck.mix : 0).toFixed(2)}${deck && deck.fading ? ' ~fade' : ''}`,
+    `feed    ${features ? features.state : '-'}${features && features.local ? ' (mic)' : ''}`,
+    `bus     ${state.manifestState} r${playlist ? playlist.revision : '-'}  ` +
+      `clips ${playlist ? playlist.entries.length : 0}${deck && deck.offline ? '  OFFLINE' : ''}`,
+    `cache   ${mb}/${budget} MB`,
+    `gov     over ${over}  under ${under}`,
+  ]);
+
+  // The title rule carries the one accent colour; the body stays dim. Built
+  // from text nodes rather than innerHTML on purpose — `zone` and `screen`
+  // come straight off the query string, and nothing user-supplied should ever
+  // reach an HTML parser, however local the page feels.
+  const nl = text.indexOf('\n');
+  el.hud.textContent = '';
+  const head = document.createElement('span');
+  head.className = 'accent';
+  head.textContent = text.slice(0, nl);
+  el.hud.append(head, document.createTextNode(text.slice(nl)));
 }
 
 // ---------------------------------------------------------------------------
@@ -388,6 +497,10 @@ async function boot() {
   features.start();
 
   requestAnimationFrame(frame);        // render from frame zero, data or not
+
+  // A short head start so the first line usually types after /api/config has
+  // landed; the log never waits on it, and never blocks the scrim either way.
+  setTimeout(typeBoot, 380);
 
   await bootstrapData();
 
