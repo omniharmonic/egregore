@@ -694,3 +694,38 @@ def test_bare_root_serves_the_join_page_but_a_zone_url_still_serves_a_screen(cfg
         screen = client.get("/?zone=main")
     assert "this device" in join.text.lower()
     assert 'id="gl"' in screen.text, "an existing screen URL must not break"
+
+
+def test_a_named_screen_inherits_its_zones_lenses(cfg_home):
+    """The bug this guards: a screen entry carries every key with an explicit
+    None when it has no override, and dict.get(key, fallback) returns that
+    None rather than falling through. Every named screen therefore reported
+    lens_stack: null, the client dropped to its built-in default, and a whole
+    venue wore the same three lenses regardless of zone."""
+    state = ConductorState(
+        clip_resolver=lambda c: None,
+        zone_config={
+            "workshop": {
+                "lens_stack": ["glitch", "chroma", "crt"],
+                "screens": {
+                    "bench": {"lens_stack": None, "loop_phase_offset": 0.5,
+                              "audio_source": None},
+                    "wall": {"lens_stack": ["bloom"], "loop_phase_offset": 0.0,
+                             "audio_source": "local_mic"},
+                },
+            },
+        },
+    )
+    # No override: inherit the zone's stack, keep the screen's own phase.
+    bench = state.get_config("workshop", "bench")
+    assert bench["lens_stack"] == ["glitch", "chroma", "crt"]
+    assert bench["loop_phase_offset"] == 0.5
+    assert bench["audio_source"] == "zone"
+
+    # An explicit override still wins.
+    wall = state.get_config("workshop", "wall")
+    assert wall["lens_stack"] == ["bloom"]
+    assert wall["audio_source"] == "local_mic"
+
+    # And the zone itself is unchanged.
+    assert state.get_config("workshop")["lens_stack"] == ["glitch", "chroma", "crt"]

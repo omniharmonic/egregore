@@ -263,17 +263,30 @@ class ConductorState:
         manifest = self._manifests.get(zone)
         crossfade_s = manifest.crossfade_s if manifest is not None else 2.0
 
+        def inherit(key: str, default):
+            """Screen value, else zone value, else default.
+
+            A screen entry carries every key with an explicit ``None`` when it
+            has no override, and ``dict.get(key, fallback)`` returns that
+            ``None`` rather than falling through. That made every *named*
+            screen report ``lens_stack: null``, so the client dropped to its
+            built-in default and a whole venue wore the same three lenses no
+            matter what its zones were configured with.
+            """
+            value = screen_cfg.get(key)
+            if value is None:
+                value = zone_cfg.get(key)
+            return default if value is None else value
+
         return {
             "zone": zone,
             "screen": screen,
-            "lens_stack": screen_cfg.get("lens_stack", zone_cfg.get("lens_stack", [])),
-            "loop_phase_offset": screen_cfg.get("loop_phase_offset", 0.0),
+            "lens_stack": inherit("lens_stack", []),
+            "loop_phase_offset": inherit("loop_phase_offset", 0.0),
             # Screen overrides zone, zone overrides the default — the same
             # precedence lens_stack uses. Reading this from the screen alone
             # made a zone-level audio_source silently inert.
-            "audio_source": screen_cfg.get(
-                "audio_source", zone_cfg.get("audio_source", "zone")
-            ),
+            "audio_source": inherit("audio_source", "zone"),
             "crossfade_s": crossfade_s,
         }
 
