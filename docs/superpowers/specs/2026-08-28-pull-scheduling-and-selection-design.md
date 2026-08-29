@@ -104,13 +104,15 @@ list[Candidate]`:
 
 ### Scoring
 
-`select(candidates, *, memory, on_screen, weights, now, tau_s) -> Selection`
+`select(candidates, *, memory, weights, now, tau_s) -> Selection`
 is a pure function:
 
 - `salience_i = tokens_i / Σ tokens`
 - `novelty_i = 1 − max_j jaccard(bag_i, bag_j)` over `j` in the last 5
-  themes of `memory` plus `on_screen` (the theme of the clip currently
-  playing, if known). `bag` = set of lower-cased motifs ∪ elemental. With no
+  themes of `memory`. The server cannot know which clip a screen is playing
+  (the playlist is weighted and the client chooses), but the newest
+  remembered theme is the last one sent, which is the right thing to be
+  novel against. `bag` = set of lower-cased motifs ∪ elemental. With no
   memory, novelty is 1.
 - `recency_i = exp(−(now − ended_at_i) / tau_s)`
 - `score_i = w_s·salience_i + w_n·novelty_i + w_r·recency_i`, weights
