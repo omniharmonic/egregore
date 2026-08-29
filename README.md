@@ -115,6 +115,13 @@ dashboard) at your **abstraction**: 0 depicts the subject recognisably, 1
 renders it as pure abstraction, 0.5 is the sweet spot. **room bias** decides
 how much the sound of the room pushes the palette.
 
+**One GPU, two jobs.** On a single machine the theme brain and the video
+renderer share the GPU. Measured on an Apple-silicon laptop: a 4B model
+priming themes in the background slowed 12-step 512×320 renders from ~110s
+to ~190s. That is the price of prompts made from the conversation; pay it,
+or put ComfyUI on another box (`generation.comfyui_url`), or set
+`weaver.engine: heuristic` for the fastest local renders.
+
 **Rendering.** `generation.backend` (*restart*) picks the renderer: `local`
 (ComfyUI + LTX-Video on this or another machine), `fal`, `veo`, or
 `procedural`. On local, **local quality** is the knob: `fast` (~90s a clip on

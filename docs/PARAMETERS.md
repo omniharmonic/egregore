@@ -24,7 +24,7 @@ preset on later runs; the start-up banner lists every override, and
 
 | parameter | default | what it does |
 |---|---|---|
-| `weaver.engine` | `auto` | Which brain turns talk into themes. `auto`: a local LLM if one answers, else the built-in matcher. `llm` requires one. `heuristic` pins the matcher. **restart** |
+| `weaver.engine` | `auto` (sharing one GPU with the renderer costs ~+70% render time; see README) | Which brain turns talk into themes. `auto`: a local LLM if one answers, else the built-in matcher. `llm` requires one. `heuristic` pins the matcher. **restart** |
 | `weaver.llm.autodetect` | true | With no `base_url`, look for LM Studio (`:1234`) and Ollama (`:11434`) and use the smallest chat model they list. `EGREGORE_LLM_AUTODETECT=0` disables. **restart** |
 | `weaver.llm.base_url` | none | An explicit OpenAI-compatible endpoint. **restart** |
 | `weaver.llm.model` | `qwen3:14b` | Used if the server lists it; otherwise the smallest chat model is chosen. A 4–8B model is right for this task. **restart** |
