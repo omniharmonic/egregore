@@ -27,7 +27,7 @@ from pathlib import Path
 
 from egregore.conductor import ConductorState, create_app
 from egregore.config import store as config_store
-from egregore.config.schema import EgregoreConfig, ZoneConfig
+from egregore.config.schema import EgregoreConfig, SelectionConfig, ZoneConfig
 from egregore.forge import (
     ClipStore,
     ComfyUIBackend,
@@ -41,7 +41,7 @@ from egregore.listener import FixtureSource, MoodIntegrator, ZoneEvents
 from egregore.loom import ZoneLoom
 from egregore.scribe import RingBuffer, install_privacy_excepthook, make_transcriber
 from egregore.types import ClipRef, FeatureFrame, ThemeObject, VideoBackend
-from egregore.weaver import Weaver, build_abstractor, synthesize_prompt
+from egregore.weaver import Weaver, Weights, build_abstractor, select, synthesize_prompt
 
 log = logging.getLogger("egregore.app")
 
@@ -151,21 +151,17 @@ _PACING_ENV = "EGREGORE_MIN_CLIP_INTERVAL_S"
 _MIN_TRANSCRIPT_WORDS = int(os.environ.get("EGREGORE_MIN_TRANSCRIPT_WORDS", "3"))
 
 #: Pending clips per zone above which the loop stops asking for more.
-_MAX_QUEUE_DEPTH = int(os.environ.get("EGREGORE_MAX_QUEUE_DEPTH", "3"))
 
 
-def _throughput_floor(
-    cfg: EgregoreConfig, ladder: list[VideoBackend], live: LiveSettings | None = None
-) -> Callable[[], float] | None:
-    """A probe the Governor calls to learn how fast the hardware can go.
-
-    The same party config has to work on a datacentre GPU, a laptop, and a
-    cloud API, and those differ by two orders of magnitude in render time. So
-    the cadence floor is not a constant in a preset — it is read back from the
-    ladder's first (preferred) rung, which updates it as real timings arrive.
-    An operator who wants a fixed cadence sets ``EGREGORE_MIN_CLIP_INTERVAL_S``.
+def _operator_floor(live: LiveSettings) -> Callable[[], float] | None:
+    """A minimum spacing the operator may pin, from the environment or the
+    settings page. The Governor no longer paces on measured render latency:
+    the loop asks for a clip only when the previous one has finished, which
+    is what bounds lag at one render. This floor is for the other case — an
+    operator who wants a *slower* room than the hardware would give.
     """
     override = os.environ.get(_PACING_ENV)
+    fixed: float | None = None
     if override is not None:
         try:
             fixed = float(override)
@@ -173,20 +169,11 @@ def _throughput_floor(
             log.warning("%s=%r is not a number; ignoring", _PACING_ENV, override)
         else:
             log.info("cadence floor pinned to %.1fs by %s", fixed, _PACING_ENV)
-            return (lambda: fixed) if fixed > 0 else None
-    if not ladder:
-        return None
-    preferred, tier = ladder[0], cfg.generation.model
 
     def probe() -> float:
-        # An operator-set floor wins over what the backend reports, so a
-        # cadence can be pinned from the settings page without a restart.
-        if live is not None and live.cadence_floor_s:
+        if live.cadence_floor_s:
             return live.cadence_floor_s
-        try:
-            return preferred.estimated_latency(tier).total_seconds()
-        except Exception:
-            return 0.0
+        return fixed if fixed and fixed > 0 else 0.0
 
     return probe
 
@@ -250,6 +237,25 @@ class LiveSettings:
     #: The local rungs these knobs are pushed to. Populated by
     #: :meth:`bind_backends`; empty when no local backend is in the ladder.
     _local_backends: list = dc_field(default_factory=list, repr=False)
+    #: Party-default selection knobs and per-zone overrides, as plain dicts
+    #: so a live change can touch one field without rebuilding the model.
+    selection: dict = dc_field(default_factory=dict)
+    selection_by_zone: dict[str, dict] = dc_field(default_factory=dict)
+
+    def selection_for(self, zone: str) -> SelectionConfig:
+        """Zone override on top of the party default, validated."""
+        merged = {**self.selection, **self.selection_by_zone.get(zone, {})}
+        return SelectionConfig.model_validate(merged)
+
+    def apply_zone_selection(self, zone: str, patch: dict) -> None:
+        cur = dict(self.selection_by_zone.get(zone, {}))
+        for k, v in patch.items():
+            if v is None or v == "":
+                cur.pop(k, None)          # clear an override: back to party default
+            else:
+                cur[k] = v
+        SelectionConfig.model_validate({**self.selection, **cur})   # reject before storing
+        self.selection_by_zone[zone] = cur
 
     def bind_backends(self, ladder: list[VideoBackend]) -> None:
         """Remember which rungs the hardware knobs apply to."""
@@ -271,6 +277,11 @@ class LiveSettings:
             abstraction=cfg.aesthetic.abstraction,
             local_steps=cfg.generation.local_steps,
             local_resolution=cfg.generation.local_resolution,
+            selection=cfg.weaver.selection.model_dump(),
+            selection_by_zone={
+                z.id: z.selection.model_dump(exclude_unset=True)
+                for z in cfg.zones if z.selection is not None
+            },
         )
 
     def apply(self, overrides: dict) -> list[str]:
@@ -298,6 +309,15 @@ class LiveSettings:
             changed.append("generation.local_resolution")
         if "local_steps" in gen or "local_resolution" in gen:
             self._push_hardware()
+        sel = (overrides.get("weaver") or {}).get("selection") or {}
+        for k in ("salience", "novelty", "recency", "segment_gap_s",
+                  "max_candidates", "recency_tau_s"):
+            if k in sel:
+                raw = sel[k]
+                self.selection[k] = None if raw in (None, "") else raw
+                changed.append(f"weaver.selection.{k}")
+        if any(c.startswith("weaver.selection.") for c in changed):
+            SelectionConfig.model_validate(self.selection)   # a bad blend must not be stored
         aes = overrides.get("aesthetic") or {}
         if "abstraction" in aes:
             self.abstraction = float(aes["abstraction"])
@@ -395,7 +415,14 @@ class ZonePipeline:
         )
         self._frame_n = 0
         self.bleeds = 0
-        self.throttled = 0
+        #: Loop ticks where spacing was satisfied but the worker was busy —
+        #: the number that says "the GPU is the bottleneck".
+        self.waited_for_slot = 0
+        #: How the last clip was chosen. Counts and scores only.
+        self.last_selection: dict | None = None
+        #: When the winning segment ended, so the landing clip can report
+        #: how far behind the room it is.
+        self._lag_anchor: float | None = None
         self._tasks: list[asyncio.Task] = []
         self._source = self._build_source(cfg)
 
@@ -492,6 +519,11 @@ class ZonePipeline:
     async def on_clip(self, clip: ClipRef) -> None:
         await self.loom.ingest(clip, clip.path)
         self.state.set_manifest(self.zone, self.loom.manifest())
+        if self._lag_anchor is not None and self.last_selection is not None:
+            # Monotonic domain: the ring stamps fragments with time.monotonic,
+            # so the anchor is monotonic too.
+            self.last_selection["lag_s"] = round(time.monotonic() - self._lag_anchor, 1)
+            self._lag_anchor = None
 
     # -- the generation loop ------------------------------------------------
 
@@ -512,15 +544,18 @@ class ZonePipeline:
             try:
                 if self.bus.frozen:
                     continue  # operator freeze: loop keeps playing, nothing new
-                if self.forge.queue_depth(self.zone) >= _MAX_QUEUE_DEPTH:
-                    # Backpressure. The cadence floor should already keep us at
-                    # the backend's pace, but a backend that suddenly slows (a
-                    # bigger model, a busy GPU, a degraded API) would otherwise
-                    # build a backlog of prompts describing a room that has
-                    # since moved on. Stale imagery is worse than less imagery.
-                    self.throttled += 1
-                    continue
-                due = self.governor.should_generate(self.zone)
+                spaced = self.governor.should_generate(self.zone)
+                busy = (
+                    self.forge.in_flight(self.zone) > 0
+                    or self.forge.queue_depth(self.zone) > 0
+                )
+                # Pull, not push. A clip is asked for when the previous one has
+                # finished, never before: the prompt is then written from what
+                # the room said *during* that render, and lag is one render —
+                # not a queue of prompts describing a room that has moved on.
+                due = spaced and not busy
+                if spaced and busy:
+                    self.waited_for_slot += 1
                 fill = False
                 if not due:
                     gap = self.live.fill_interval_s
@@ -528,21 +563,20 @@ class ZonePipeline:
                     if gap and thin and (
                         time.monotonic() - self._last_clip_request
                     ) >= gap:
-                        # The budget cadence can be minutes apart on a paid
-                        # backend, and a loom with one clip reads as a stutter
-                        # rather than a dream. So fill — but only while the
-                        # pool is thin. Filling on a timer forever buries the
-                        # diffusion clips under connective tissue, which is
-                        # what "it spent real money and looks procedural"
-                        # actually means.
+                        # The free lane covers an empty pool at party start
+                        # and gaps between renders — only while the pool is
+                        # thin, or it buries the diffusion clips under
+                        # connective tissue.
                         fill = True
                 if not due and not fill:
                     continue
                 self._last_clip_request = time.monotonic()
                 plan = self.loom.plan_next()
-                window = self.ring.snapshot()
+                sel_cfg = self.live.selection_for(self.zone)
+                segments = self.ring.segments(sel_cfg.segment_gap_s)
+                window_tokens = sum(s.tokens for s in segments)
                 borrowed: ThemeObject | None = None
-                if len(window.split()) < self.weaver.min_window_tokens:
+                if window_tokens < self.weaver.min_window_tokens:
                     # Zone-to-zone bleed (L-7): a quiet or dead zone dreams
                     # on a neighbouring zone's most recent validated theme.
                     borrowed = self.bus.borrow_theme(self.zone)
@@ -568,26 +602,49 @@ class ZonePipeline:
                         free_only=fill,
                     )
                     continue
-                result = await self.weaver.weave(
-                    window,
-                    grammar=self.live.grammar,
-                    drift=self.live.drift,
-                    mood=self.mood.state(),
-                    continuity=self.loom.continuity_context(),
-                    abstraction=self.live.abstraction,
-                )
-                if result.purge_requested:
-                    self.ring.zero()
-                    log.warning("zone %s: cycle skipped, buffer purged", self.zone)
-                    continue
-                if result.prompt is None:
-                    continue
+
+                theme: ThemeObject | None = None
+                prompt = ""
+                fallback = False
+                if window_tokens >= self.weaver.min_window_tokens:
+                    chosen = await self._choose_theme(segments, sel_cfg)
+                    if chosen is not None:
+                        theme = chosen
+                        prompt = synthesize_prompt(
+                            theme, self.live.grammar, self.loom.continuity_context(),
+                            self.live.drift, self.mood.state(),
+                            abstraction=self.live.abstraction,
+                        )
+                        self.weaver.prompts_synthesized += 1
+                if theme is None:
+                    # Nothing survived per-segment validation, or the window
+                    # is thin: the whole-window path, which may purge,
+                    # exactly as before.
+                    result = await self.weaver.weave(
+                        self.ring.snapshot(),
+                        grammar=self.live.grammar,
+                        drift=self.live.drift,
+                        mood=self.mood.state(),
+                        continuity=self.loom.continuity_context(),
+                        abstraction=self.live.abstraction,
+                    )
+                    if result.purge_requested:
+                        self.ring.zero()
+                        log.warning("zone %s: cycle skipped, buffer purged", self.zone)
+                        continue
+                    if result.prompt is None:
+                        continue
+                    prompt = result.prompt
+                    theme = result.theme
+                    fallback = result.fallback
+                    self.last_selection = None
+                    self._lag_anchor = None
                 # The outbound prompt is the one string this system is
                 # willing to send to a third party, so showing it to the
                 # operator is strictly safer than what already happens to it.
                 # It is also the only way to see, from outside, that the
                 # video on screen came from what the room actually said.
-                self.last_prompt = result.prompt
+                self.last_prompt = prompt
                 self.last_prompt_at = time.time()
                 if not fill:
                     # A fill must not reset the paid cadence, or the budget
@@ -595,24 +652,87 @@ class ZonePipeline:
                     self.governor.record_generation(self.zone)
                 await self.forge.request(
                     zone=self.zone,
-                    prompt=result.prompt,
+                    prompt=prompt,
                     duration_s=self.live.clip_duration_s,
                     tier=cfg.generation.model,
-                    theme_hint=result.theme,
+                    theme_hint=theme,
                     seed_image=plan.seed_image,
                     extend_from=plan.use_extend,
                     free_only=fill,
                 )
-                if result.theme is not None and not result.fallback:
-                    self.mood.absorb_theme(result.theme)
-                    self.loom.remember_theme(result.theme)
-                    self.bus.share_theme(self.zone, result.theme)
+                if theme is not None and not fallback:
+                    self.mood.absorb_theme(theme)
+                    self.loom.remember_theme(theme)
+                    self.bus.share_theme(self.zone, theme)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 # Content-free by the scrubbing excepthook contract; the
                 # loop must survive anything (degradation, not death).
                 log.exception("zone %s: generation cycle failed", self.zone)
+
+    async def _choose_theme(self, segments, sel_cfg: SelectionConfig) -> ThemeObject | None:
+        """Abstract each stretch of speech, score them, keep the best.
+
+        Records ``last_selection`` (counts and scores — motifs are validated
+        abstractions, never text) and the lag anchor. Returns None when no
+        candidate survived validation, so the caller can fall back to the
+        whole-window path.
+        """
+        candidates = await self.weaver.weave_candidates(
+            segments, mood=self.mood.state(), max_candidates=sel_cfg.max_candidates,
+        )
+        if not candidates:
+            return None
+        now = time.monotonic()
+        if len(candidates) == 1:
+            winner = candidates[0]
+            scored_out = [{
+                "motifs": list(winner.theme.motifs),
+                "elemental": list(winner.theme.elemental),
+                "salience": 1.0, "novelty": 1.0, "recency": 1.0,
+                "score": 1.0, "winner": True,
+            }]
+            listened = now - winner.started_at
+            winner_score = 1.0
+        else:
+            selection = select(
+                candidates,
+                memory=self.loom.thematic_memory,
+                weights=Weights(sel_cfg.salience, sel_cfg.novelty, sel_cfg.recency),
+                now=now,
+                tau_s=sel_cfg.recency_tau_s or self._last_render_s(),
+            )
+            winner = selection.winner
+            listened = selection.listened_s
+            winner_score = selection.scored[0].score
+            scored_out = [{
+                "motifs": list(sc.candidate.theme.motifs),
+                "elemental": list(sc.candidate.theme.elemental),
+                "salience": round(sc.salience, 3),
+                "novelty": round(sc.novelty, 3),
+                "recency": round(sc.recency, 3),
+                "score": round(sc.score, 3),
+                "winner": sc.candidate is winner,
+            } for sc in selection.scored]
+        self.last_selection = {
+            "candidates": len(candidates),
+            "winner_score": round(winner_score, 3),
+            "listened_s": round(listened, 1),
+            "lag_s": None,
+            "scored": scored_out,
+        }
+        self._lag_anchor = winner.ended_at
+        return winner.theme
+
+    def _last_render_s(self) -> float:
+        """The preferred backend's learned render time, for the recency tau."""
+        try:
+            return self.forge.backends[0].estimated_latency(
+                self.cfg.generation.model
+            ).total_seconds()
+        except Exception:
+            return 0.0
 
     def set_muted(self, muted: bool) -> None:
         self.muted = muted
@@ -646,7 +766,12 @@ class ZonePipeline:
             "validator_rejections": self.weaver.rejections,
             "purges": self.weaver.purges_requested,
             "bleeds": self.bleeds,
-            "throttled": self.throttled,
+            "in_flight": self.forge.in_flight(self.zone),
+            "waited_for_slot": self.waited_for_slot,
+            "last_selection": (
+                {k: v for k, v in self.last_selection.items() if k != "scored"}
+                if self.last_selection else None
+            ),
             "discarded_fragments": self.discarded_fragments,
             "input_device": self._publish_input_device(),
             **self.loom.status(),
@@ -749,7 +874,7 @@ async def run_party(cfg: EgregoreConfig, *, ignore_settings: bool = False) -> No
         cfg,
         cost_per_clip=cost_per_clip(cfg, ladder),
         min_interval_s=60.0,
-        throughput_floor_s=_throughput_floor(cfg, ladder, live),
+        throughput_floor_s=_operator_floor(live),
     )
 
     # Under "mirror" exactly one zone commissions video and every screen
@@ -862,6 +987,8 @@ async def run_party(cfg: EgregoreConfig, *, ignore_settings: bool = False) -> No
                         "last_prompt_at": pipe.last_prompt_at,
                         "fragments": pipe.ring.occupancy()[0],
                         "tokens": pipe.ring.token_count(),
+                        "candidates": (pipe.last_selection or {}).get("scored", []),
+                        "listened_s": (pipe.last_selection or {}).get("listened_s"),
                     }
                     for zone, pipe in pipelines.items()
                 }

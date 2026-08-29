@@ -452,3 +452,106 @@ async def test_music_shaped_noise_does_not_reach_the_ring(tmp_path, monkeypatch)
         await pipe._on_speech_audio(b"\x00\x01" * 8000, 16000)
         assert pipe.ring.token_count() > before
         assert pipe.discarded_fragments == 2
+
+
+# ---------------------------------------------------------------------------
+# Pull scheduling — one render in flight, never a backlog
+# ---------------------------------------------------------------------------
+
+
+class GatedMock(MockBackend):
+    """A backend that renders only when told to, so a test can hold a job
+    in flight and watch what the loop does meanwhile."""
+
+    def __init__(self, store, **kw):
+        super().__init__(store, **kw)
+        self.gate = asyncio.Event()
+        self.started = 0
+
+    def estimated_latency(self, tier):
+        # Behaves like local diffusion: free but slow, so the fill lane must
+        # not route fills into it (FILL_MAX_LATENCY_S).
+        from datetime import timedelta
+        return timedelta(seconds=120)
+
+    async def generate(self, *a, **kw):
+        self.started += 1
+        await self.gate.wait()
+        self.gate.clear()
+        return await super().generate(*a, **kw)
+
+
+async def _wait_store(store: ClipStore, n: int, timeout: float = 30.0) -> list:
+    """Party.wait_clips reads the Party's own store; a test that hands in a
+    ladder built on its own store must poll that one."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        clips = store.all()
+        if len(clips) >= n:
+            return clips
+        await asyncio.sleep(0.1)
+    raise AssertionError(f"wanted {n} clips, got {len(store.all())}")
+
+
+async def test_no_new_request_while_a_render_is_in_flight(tmp_path):
+    cfg = _cfg(tmp_path, zones=[{"id": "main", "mic": {"type": "fixture"}}])
+    store = ClipStore(Path(cfg.clip_store_dir))
+    slow = GatedMock(store, name="procedural")
+    async with Party(cfg, ladder=[slow]) as party:
+        pipe = party.pipelines["main"]
+        pipe.live.fill_interval_s = None          # isolate the paid lane
+        deadline = time.monotonic() + 20
+        while slow.started == 0 and time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+        assert slow.started == 1
+        await asyncio.sleep(3.0)                  # several loop ticks, still gated
+        assert slow.started == 1, "must not enqueue behind the render"
+        assert party.forge.queue_depth("main") == 1
+        assert pipe.waited_for_slot > 0
+        slow.gate.set()
+        await _wait_store(store, 1)
+        deadline = time.monotonic() + 20
+        while slow.started < 2 and time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+        assert slow.started == 2, "the next request follows completion"
+        slow.gate.set()
+
+
+async def test_fill_lane_still_covers_a_thin_pool_during_a_render(tmp_path):
+    cfg = _cfg(tmp_path, zones=[{"id": "main", "mic": {"type": "fixture"}}])
+    store = ClipStore(Path(cfg.clip_store_dir))
+    slow = GatedMock(store, name="local")
+    free = MockBackend(store, name="procedural")
+    async with Party(cfg, ladder=[slow, free]) as party:
+        party.live.fill_interval_s = 0.5
+        clips = await _wait_store(store, 2)
+        assert all(c.backend == "procedural" for c in clips)
+        slow.gate.set()
+
+
+async def test_selection_is_recorded_and_lag_is_measured(tmp_path):
+    cfg = _cfg(tmp_path, zones=[{"id": "main", "mic": {"type": "fixture"}}])
+    async with Party(cfg) as party:
+        pipe = party.pipelines["main"]
+        await party.wait_clips(2, "main")
+        deadline = time.monotonic() + 10
+        while (pipe.last_selection is None or pipe.last_selection.get("lag_s") is None) \
+                and time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+        sel = pipe.status()["last_selection"]
+        assert sel is not None and sel["candidates"] >= 1
+        assert sel["lag_s"] is not None and sel["lag_s"] >= 0
+        assert "throttled" not in pipe.status()
+        assert pipe.status()["in_flight"] in (0, 1)
+
+
+async def test_selection_weights_are_live_per_zone(tmp_path):
+    cfg = _cfg(tmp_path, zones=[{"id": "main", "mic": {"type": "fixture"}}])
+    async with Party(cfg) as party:
+        assert party.live.selection_for("main").novelty == 0.3
+        party.state.settings_handler({"weaver": {"selection": {"novelty": 0.8}}})
+        assert party.live.selection_for("main").novelty == 0.8
+        party.live.apply_zone_selection("main", {"novelty": 0.1})
+        assert party.live.selection_for("main").novelty == 0.1
+        party.state.settings_handler({"weaver": {"selection": {"novelty": 0.6}}})
+        assert party.live.selection_for("main").novelty == 0.1, "zone override wins"
