@@ -553,6 +553,7 @@ def create_app(
                 "audio_source": client.get("audio_source", "zone"),
                 "crossfade_s": client.get("crossfade_s", 2.0),
                 "playback_rate": client.get("playback_rate", 1.0),
+                "selection": state.zone_config[zone].get("selection", {}),
                 "config_revision": state.config_revision(zone),
                 "screens": sorted(state.zone_config[zone].get("screens", {})),
                 "mic": source.get("mic", {}),
@@ -636,6 +637,42 @@ def create_app(
                     "audio_source must be 'zone' or 'local_mic'",
                 )
             allowed["audio_source"] = source
+        if "selection" in patch:
+            raw = patch.get("selection") or {}
+            limits = {"salience": (0.0, 1.0), "novelty": (0.0, 1.0),
+                      "recency": (0.0, 1.0), "segment_gap_s": (1.0, 60.0)}
+            cleaned: dict = {}
+            for key, (lo, hi) in limits.items():
+                if key not in raw:
+                    continue
+                if raw[key] in (None, ""):
+                    cleaned[key] = None          # clear the zone override
+                    continue
+                try:
+                    v = float(raw[key])
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST, f"selection.{key} must be a number"
+                    ) from exc
+                if not lo <= v <= hi:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST,
+                        f"selection.{key} must be between {lo} and {hi}",
+                    )
+                cleaned[key] = v
+            if cleaned:
+                if state.zone_settings_handler is not None:
+                    try:
+                        state.zone_settings_handler(zone, cleaned)
+                    except ValueError as exc:
+                        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+                current = dict(state.zone_config.get(zone, {}).get("selection") or {})
+                for k, v in cleaned.items():
+                    if v is None:
+                        current.pop(k, None)
+                    else:
+                        current[k] = v
+                allowed["selection"] = current
         if not allowed:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, "nothing changeable in that payload"

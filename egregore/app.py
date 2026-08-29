@@ -977,6 +977,12 @@ async def run_party(cfg: EgregoreConfig, *, ignore_settings: bool = False) -> No
     state.ingest_handler = _ingest
     state.settings_handler = _apply_settings
 
+    def _apply_zone_settings(zone: str, patch: dict) -> None:
+        live.apply_zone_selection(zone, patch)
+        log.info("zone %s: selection changed: %s", zone, ", ".join(sorted(patch)))
+
+    state.zone_settings_handler = _apply_zone_settings
+
     if os.environ.get("EGREGORE_MONITOR") == "1":
         def _monitor() -> dict:
             return {

@@ -753,3 +753,26 @@ def test_pacing_is_served_and_bounded(cfg_home):
                     {"playback_rate": "fast"}, {"crossfade_override": 60},
                     {"crossfade_override": 0}):
             assert client.post("/api/zones/main", json=bad).status_code == 400
+
+
+def test_zone_selection_is_accepted_and_forwarded(cfg_home):
+    state = _zoned_state()
+    seen = {}
+    state.zone_settings_handler = lambda zone, patch: seen.update({zone: patch})
+    app = create_app(state, lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        r = client.post("/api/zones/main",
+                        json={"selection": {"novelty": 0.9, "segment_gap_s": 4}})
+        assert r.status_code == 200, r.text
+        assert seen == {"main": {"novelty": 0.9, "segment_gap_s": 4.0}}
+        body = client.get("/api/zones").json()
+        assert body["zones"]["main"]["selection"]["novelty"] == 0.9
+
+
+def test_zone_selection_rejects_a_bad_weight(cfg_home):
+    app = create_app(_zoned_state(), lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        r = client.post("/api/zones/main", json={"selection": {"novelty": 7}})
+        assert r.status_code == 400

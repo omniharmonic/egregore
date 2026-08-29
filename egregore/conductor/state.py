@@ -106,6 +106,8 @@ class ConductorState:
         #: actually changed. ``None`` means this deployment exposes no
         #: runtime settings.
         self.settings_handler: Callable[[dict], dict] | None = None
+        #: Per-zone live settings the pipeline owns (selection weights).
+        self.zone_settings_handler: Callable[[str, dict], None] | None = None
         #: The config the party is actually running, as plain JSON, so the
         #: settings page can show effective values next to the overrides.
         self.effective_config: dict | None = None
