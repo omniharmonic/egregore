@@ -47,6 +47,7 @@ three weights need not sum to one.
 | `selection.recency` (**fresh**) | 0.45 | Favours what was said most recently. Recency-forward keeps the wall with the conversation. |
 | `selection.segment_gap_s` (**pause**) | 6 | A pause this long ends one thought and starts the next. |
 | `selection.lookback_s` | none = 2× the last render, ≥ 90s | How far back a thought may come from. Older speech competes only when nothing newer exists. |
+| `selection.standin_penalty` | 0.4 | How much a thought the heuristic stood in for (the LLM was busy) yields to one the LLM worked out. The freshest thought is usually a stand-in; at 0 it wins on recency every time. |
 | `selection.max_candidates` | 6 | The longest thoughts considered per selection. |
 | `selection.recency_tau_s` | none = the last render's duration | The time constant of the freshness decay, floored at 30s. |
 

@@ -75,6 +75,10 @@ class SelectionConfig(BaseModel):
     # won. None = twice the last render, never under 90s. Older material is
     # used only if nothing newer exists.
     lookback_s: float | None = Field(None, ge=10.0)
+    # How much a thought the heuristic stood in for (LLM busy or over
+    # budget) yields to one the LLM worked out. The freshest thought is
+    # usually a stand-in; without this it wins on recency every time.
+    standin_penalty: float = Field(0.4, ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def _some_weight(self) -> SelectionConfig:

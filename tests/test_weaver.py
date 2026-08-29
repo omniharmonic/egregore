@@ -1074,3 +1074,16 @@ async def test_the_last_segment_is_primed_once_the_pause_has_passed():
     w.prime(segs, now=30.0, gap_s=6.0)          # 10s of silence: closed
     await w.drain(timeout=2.0)
     assert slow.calls == 2
+
+
+async def test_candidates_say_when_the_heuristic_stood_in():
+    slow = SlowCounting(delay=0.5)
+    w = Weaver(slow, stage1_budget_s=5.0)
+    w.prime([seg("the tide pools were glowing green tonight", 1), seg("open thought", 2)])
+    await _asyncio.sleep(0.05)
+    cands = await w.weave_candidates([seg("gears and pressure and copper in the workshop", 3)])
+    assert cands[0].standin is True
+    await w.drain(timeout=5.0)
+    heur = Weaver()
+    cands = await heur.weave_candidates([seg("gears and pressure and copper in the workshop", 3)])
+    assert cands[0].standin is False, "with no LLM at all, the heuristic is the brain, not a stand-in"

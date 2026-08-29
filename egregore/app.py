@@ -347,7 +347,7 @@ class LiveSettings:
             changed.append("weaver.fallback_after_s")
         sel = (overrides.get("weaver") or {}).get("selection") or {}
         for k in ("salience", "novelty", "recency", "segment_gap_s",
-                  "max_candidates", "recency_tau_s", "lookback_s"):
+                  "max_candidates", "recency_tau_s", "lookback_s", "standin_penalty"):
             if k in sel:
                 raw = sel[k]
                 self.selection[k] = None if raw in (None, "") else raw
@@ -819,6 +819,7 @@ class ZonePipeline:
                 weights=Weights(sel_cfg.salience, sel_cfg.novelty, sel_cfg.recency),
                 now=now,
                 tau_s=sel_cfg.recency_tau_s or self._last_render_s(),
+                standin_penalty=sel_cfg.standin_penalty,
             )
             winner = selection.winner
             listened = selection.listened_s

@@ -106,6 +106,7 @@ class Weaver:
         )
         self._slow_streak = 0
         self._stood_down: str | None = None
+        self._last_was_standin = False
         # Counters are content-blind and safe to surface in ZoneStatus.
         self.cycles = 0
         self.prompts_synthesized = 0
@@ -323,17 +324,21 @@ class Weaver:
             # A local server answers one request at a time: queueing behind
             # our own background work would spend the whole budget waiting.
             # The heuristic stands in for this one thought.
+            self._last_was_standin = True
             return await self._heuristic.abstract(text, mood, attempt=0)
         self._steer()
         try:
-            return await asyncio.wait_for(
+            theme = await asyncio.wait_for(
                 self.abstractor.abstract(text, mood, attempt=0),
                 timeout=self.stage1_budget_s,
             )
         except TimeoutError:
             log.warning("weaver stage-1 over budget (%.0fs); heuristic stands in",
                         self.stage1_budget_s)
+            self._last_was_standin = True
             return await self._heuristic.abstract(text, mood, attempt=0)
+        self._last_was_standin = False
+        return theme
 
     async def weave_candidates(
         self,
@@ -363,21 +368,25 @@ class Weaver:
                 theme = self._cache[k]
                 if theme is None:
                     continue                       # rejected in the background
+                standin = False
             else:
                 try:
                     theme = await self._abstract_within_budget(s.text, mood)
                 except AbstractionError:
                     log.warning("weaver candidate stage-1 failed")
                     continue
+                standin = self._last_was_standin
                 verdict = validate_theme(theme, s.text)
                 if not verdict.ok:
                     self.rejections += 1
                     log.warning("weaver candidate rejected", extra={"reasons": verdict.reasons})
                     self._remember(k, None)
                     continue
-                self._remember(k, theme)
+                if not standin:
+                    self._remember(k, theme)      # a stand-in is not worth keeping
             out.append(Candidate(theme=theme, tokens=int(s.tokens),
-                                 ended_at=float(s.ended_at), started_at=float(s.started_at)))
+                                 ended_at=float(s.ended_at), started_at=float(s.started_at),
+                                 standin=standin))
         return _consolidate(out)
 
     # -- internals --
@@ -426,5 +435,6 @@ def _consolidate(cands: list[Candidate]) -> list[Candidate]:
                 tokens=prev.tokens + c.tokens,
                 ended_at=max(prev.ended_at, c.ended_at),
                 started_at=min(prev.started_at, c.started_at),
+                standin=prev.standin and c.standin,
             )
     return sorted(merged.values(), key=lambda c: c.started_at)

@@ -58,6 +58,8 @@ class Candidate:
     tokens: int
     ended_at: float
     started_at: float
+    #: The heuristic answered for an LLM that was busy or over budget.
+    standin: bool = False
 
 
 @dataclass(frozen=True)
@@ -95,8 +97,16 @@ def select(
     weights: Weights,
     now: float,
     tau_s: float,
+    standin_penalty: float = 0.0,
 ) -> Selection:
-    """Score every candidate and return the best, with the working shown."""
+    """Score every candidate and return the best, with the working shown.
+
+    ``standin_penalty`` scales down a candidate the heuristic answered for
+    while the LLM was busy: the freshest thought usually is one, and left
+    alone it wins on recency every time, so the LLM's work never reaches
+    the wall. 0 = no preference; 0.4 = a worked-out theme is worth 1.67 of
+    a stand-in.
+    """
     if not candidates:
         raise ValueError("no candidates to select from")
     total_w = weights.salience + weights.novelty + weights.recency
@@ -116,6 +126,8 @@ def select(
         novelty = 1.0 - max((_jaccard(bag, r) for r in recent), default=0.0)
         recency = math.exp(-max(0.0, now - c.ended_at) / tau)
         score = w_s * salience + w_n * novelty + w_r * recency
+        if c.standin:
+            score *= max(0.0, 1.0 - standin_penalty)
         scored.append(ScoredCandidate(c, salience, novelty, recency, score))
 
     # Best first; among equals, the most recently finished.

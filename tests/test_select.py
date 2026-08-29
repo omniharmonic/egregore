@@ -137,3 +137,18 @@ def test_synthesis_room_bias_can_be_turned_down():
     assert "bias the palette dark" not in soft and "the room is quiet" in soft
     off = synthesize_prompt(t, "grammar", None, 0.4, quiet, room_bias=0.0)
     assert "Room bias" not in off
+
+
+def test_a_stand_in_theme_yields_to_a_worked_out_one():
+    # When a render slot opens, the freshest thought is usually one the
+    # heuristic stood in for while the LLM was busy. Left alone it wins on
+    # recency every time and the LLM's work is never on the wall.
+    worked = Candidate(theme=theme("dawn-bleached sand", "tide pools"), tokens=20,
+                       ended_at=NOW - 30, started_at=NOW - 40)
+    standin = Candidate(theme=theme("vast blue depth"), tokens=20,
+                        ended_at=NOW - 2, started_at=NOW - 12, standin=True)
+    plain = select([worked, standin], memory=[], weights=Weights(0.35, 0.2, 0.45), now=NOW, tau_s=60)
+    assert plain.winner is standin, "without the penalty recency decides"
+    sel = select([worked, standin], memory=[], weights=Weights(0.35, 0.2, 0.45), now=NOW, tau_s=60,
+                 standin_penalty=0.4)
+    assert sel.winner is worked
