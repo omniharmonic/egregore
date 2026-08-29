@@ -290,4 +290,6 @@ uv run pytest -q
 `egregore/app.py` is the only place modules meet; every module imports only
 `egregore.types`, `egregore.config.schema`, and the standard library.
 `CONTRACTS.md` describes the boundaries. Design notes and plans live in
-`docs/dev/`.
+`docs/dev/`. **[docs/HANDOFF.md](docs/HANDOFF.md)** is the state of the
+project — what is proven, the measured trade-offs, known limitations, and
+the roadmap — written for whoever picks it up next.

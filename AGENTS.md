@@ -191,7 +191,13 @@ is picked up again on the next start, so a restart does not go dark.
 `uv run pytest -q` must pass (about 470 tests, one minute) before any code
 change is trusted. `tests/test_privacy.py` must never fail.
 
-## 12. Repository map
+## 12. State of the project
+
+`docs/HANDOFF.md`: what is proven on real hardware, the measured
+trade-offs, known limitations, and the roadmap in order. Read it before
+proposing changes.
+
+## 13. Repository map
 
 ```
 egregore/app.py        the only place modules meet
