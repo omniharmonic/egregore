@@ -55,6 +55,8 @@ LIVE_KEYS: frozenset[str] = frozenset({
     "weaver.selection.segment_gap_s",
     "weaver.selection.max_candidates",
     "weaver.selection.recency_tau_s",
+    "weaver.selection.lookback_s",
+    "aesthetic.room_bias",
     "weaver.fallback_after_s",
 })
 

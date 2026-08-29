@@ -286,3 +286,11 @@ def test_linger_and_fill_duration_defaults():
 def test_hold_is_bounded():
     with pytest.raises(ValueError):
         EgregoreConfig.model_validate({"zones": [{"id": "a", "hold_s": 1000}]})
+
+
+def test_lookback_and_room_bias_are_config_and_live():
+    cfg = EgregoreConfig()
+    assert cfg.weaver.selection.lookback_s is None, "None = about the last render"
+    assert cfg.aesthetic.room_bias == 1.0
+    assert "weaver.selection.lookback_s" in store.LIVE_KEYS
+    assert "aesthetic.room_bias" in store.LIVE_KEYS

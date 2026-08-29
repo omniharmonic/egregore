@@ -256,7 +256,10 @@ class Soak:
         at = z.get("last_prompt_at") or 0.0
         if at and at != self.last_prompt_at and z.get("last_prompt"):
             self.last_prompt_at = at
+            key = (sel.get("listened_s"), sel.get("age_s"), sel.get("candidates"))
+            same = bool(self.prompts) and self.prompts[-1].get("key") == key
             self.prompts.append({
+                "key": key, "fill": same,
                 "t": round(t, 1), "scene": row["scene"], "prompt": z["last_prompt"],
                 "candidates": mon.get("candidates", []), "listened": sel.get("listened_s"),
                 "age": sel.get("age_s"), "n": sel.get("candidates"),
@@ -346,7 +349,9 @@ class Soak:
                  f"{elapsed_min:.0f} min, {self.spoken_words} words spoken across {len(self.scene_log)} scenes.\n")
         L.append("## Headline numbers\n")
         L.append("| metric | value |\n|---|---|")
-        L.append(f"| prompts produced | {len(self.prompts)} |")
+        L.append(f"| prompts produced | {len(self.prompts)} ({sum(1 for p in self.prompts if not p.get('fill'))} paid, {sum(1 for p in self.prompts if p.get('fill'))} fill) |")
+        fb = sum(1 for p in self.prompts if not p.get('fill') and 'formless drift; soft accumulation; quiet dispersal' in p['prompt'])
+        L.append(f"| paid prompts rendered from the no-match fallback theme | {fb} |")
         L.append(f"| clips stored | {sum(by_backend.values())} — " + ", ".join(f"{b} {n}" for b, n in sorted(by_backend.items())) + " |")
         L.append(f"| local renders | {len(renders)} ({sum(1 for r in renders if r['seeded'])} seeded) |")
         L.append(f"| render wall (s) | median {med(walls)}, range {rng(walls)} |")
@@ -403,7 +408,8 @@ class Soak:
             for p in ps:
                 themes = re.search(r"(Depict|Show|Suggest|Render) these[^\n]*", p["prompt"])
                 pal = re.search(r"Elemental palette[^\n]*", p["prompt"])
-                L.append(f"- **{p['t']:.0f}s** — {themes.group(0) if themes else '(fallback prompt)'}")
+                tag = " *(fill — same selection as above)*" if p.get("fill") else ""
+                L.append(f"- **{p['t']:.0f}s**{tag} — {themes.group(0) if themes else '(fallback prompt)'}")
                 if pal:
                     L.append(f"  - {pal.group(0)}")
                 if p.get("n"):

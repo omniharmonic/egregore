@@ -218,6 +218,8 @@ class LiveSettings:
     grammar: str = ""
     #: 1 = pure abstraction, 0 = recognisable depiction.
     abstraction: float = 1.0
+    #: How much the room's sound shapes the palette (0 = not at all).
+    room_bias: float = 1.0
     cadence_floor_s: float | None = None
     #: Longest the loop may go without a new clip while the pool is still
     #: thin. Filling is not a steady drip: the free renderer exists to get a
@@ -279,6 +281,7 @@ class LiveSettings:
             drift=cfg.aesthetic.drift,
             grammar=cfg.aesthetic.grammar,
             abstraction=cfg.aesthetic.abstraction,
+            room_bias=cfg.aesthetic.room_bias,
             local_steps=cfg.generation.local_steps,
             local_resolution=cfg.generation.local_resolution,
             fallback_after_s=cfg.weaver.fallback_after_s,
@@ -324,7 +327,7 @@ class LiveSettings:
             changed.append("weaver.fallback_after_s")
         sel = (overrides.get("weaver") or {}).get("selection") or {}
         for k in ("salience", "novelty", "recency", "segment_gap_s",
-                  "max_candidates", "recency_tau_s"):
+                  "max_candidates", "recency_tau_s", "lookback_s"):
             if k in sel:
                 raw = sel[k]
                 self.selection[k] = None if raw in (None, "") else raw
@@ -335,6 +338,9 @@ class LiveSettings:
         if "abstraction" in aes:
             self.abstraction = float(aes["abstraction"])
             changed.append("aesthetic.abstraction")
+        if "room_bias" in aes:
+            self.room_bias = float(aes["room_bias"])
+            changed.append("aesthetic.room_bias")
         if "grammar" in aes:
             self.grammar = str(aes["grammar"])
             changed.append("aesthetic.grammar")
@@ -643,6 +649,7 @@ class ZonePipeline:
                         self.live.drift,
                         self.mood.state(),
                         abstraction=self.live.abstraction,
+                        room_bias=self.live.room_bias,
                     )
                     self.bleeds += 1
                     self.governor.record_generation(self.zone)
@@ -672,6 +679,7 @@ class ZonePipeline:
                             theme, self.live.grammar, self.loom.continuity_context(),
                             self.live.drift, self.mood.state(),
                             abstraction=self.live.abstraction,
+                            room_bias=self.live.room_bias,
                         )
                         self.weaver.prompts_synthesized += 1
                 if theme is None:
@@ -685,6 +693,7 @@ class ZonePipeline:
                         mood=self.mood.state(),
                         continuity=self.loom.continuity_context(),
                         abstraction=self.live.abstraction,
+                        room_bias=self.live.room_bias,
                     )
                     if result.purge_requested:
                         self.ring.zero()
@@ -743,12 +752,16 @@ class ZonePipeline:
         candidate survived validation, so the caller can fall back to the
         whole-window path.
         """
+        now = time.monotonic()
+        # What was said during the last render is what the next clip should
+        # be about. Older material competes only when nothing newer exists.
+        lookback = sel_cfg.lookback_s or max(2.0 * self._last_render_s(), 90.0)
+        recent = [s for s in segments if now - s.ended_at <= lookback] or list(segments)
         candidates = await self.weaver.weave_candidates(
-            segments, mood=self.mood.state(), max_candidates=sel_cfg.max_candidates,
+            recent, mood=self.mood.state(), max_candidates=sel_cfg.max_candidates,
         )
         if not candidates:
             return None
-        now = time.monotonic()
         if len(candidates) == 1:
             winner = candidates[0]
             scored_out = [{

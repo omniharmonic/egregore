@@ -23,7 +23,13 @@ from dataclasses import dataclass, field
 
 from egregore.types import MoodState, ThemeObject
 
-from .abstractor import AbstractionError, Abstractor, HeuristicAbstractor, fallback_theme
+from .abstractor import (
+    DEFAULT_MOTIFS,
+    AbstractionError,
+    Abstractor,
+    HeuristicAbstractor,
+    fallback_theme,
+)
 from .select import Candidate
 from .synthesis import synthesize_prompt
 from .validator import ValidationResult, validate_theme
@@ -81,11 +87,12 @@ class Weaver:
         mood: MoodState | None = None,
         continuity: str | None = None,
         abstraction: float = 1.0,
+        room_bias: float = 1.0,
     ) -> WeaveResult:
         self.cycles += 1
 
         if self._is_effectively_empty(window_text):
-            return self._weave_fallback(grammar, drift, mood, continuity, abstraction)
+            return self._weave_fallback(grammar, drift, mood, continuity, abstraction, room_bias)
 
         last: ValidationResult | None = None
         for attempt in range(1, self.max_attempts + 1):
@@ -100,7 +107,7 @@ class Weaver:
             if last.ok:
                 prompt = synthesize_prompt(
                     theme, grammar, continuity, drift, mood,
-                    abstraction=abstraction,
+                    abstraction=abstraction, room_bias=room_bias,
                 )
                 self.prompts_synthesized += 1
                 self.last_theme = theme
@@ -168,9 +175,10 @@ class Weaver:
                 continue
             out.append(Candidate(theme=theme, tokens=int(s.tokens),
                                  ended_at=float(s.ended_at), started_at=float(s.started_at)))
-        return out
+        return _consolidate(out)
 
     # -- internals --
+
 
     def _is_effectively_empty(self, window_text: str) -> bool:
         return len((window_text or "").split()) < self.min_window_tokens
@@ -181,13 +189,39 @@ class Weaver:
         drift: float,
         mood: MoodState | None,
         continuity: str | None,
-        abstraction: float = 1.0,
-    ) -> WeaveResult:
+        abstraction: float = 1.0, room_bias: float = 1.0) -> WeaveResult:
         theme = fallback_theme(mood, self.last_theme)
         prompt = synthesize_prompt(
-            theme, grammar, continuity, drift, mood, abstraction=abstraction
-        )
+            theme, grammar, continuity, drift, mood, abstraction=abstraction, room_bias=room_bias)
         self.fallbacks += 1
         self.prompts_synthesized += 1
         log.info("weaver cycle fell back to features", extra={"has_mood": mood is not None})
         return WeaveResult(prompt=prompt, theme=theme, attempts=0, fallback=True)
+
+
+def _consolidate(cands: list[Candidate]) -> list[Candidate]:
+    """Merge candidates that abstracted to the same theme, and keep the
+    abstractor's no-match fallback only when nothing else survived.
+
+    Two stretches of speech that map to one theme are one theme the room
+    dwelt on twice: their words add up, which is what salience means. And a
+    sentence the abstractor could not place — it returns ``DEFAULT_MOTIFS``
+    for those — must never outrank one it could, which in the first soak it
+    did, repeatedly.
+    """
+    real = [c for c in cands if tuple(c.theme.motifs) != DEFAULT_MOTIFS]
+    pool = real or cands
+    merged: dict[frozenset[str], Candidate] = {}
+    for c in pool:
+        key = frozenset(m.strip().lower() for m in (*c.theme.motifs, *c.theme.elemental))
+        prev = merged.get(key)
+        if prev is None:
+            merged[key] = c
+        else:
+            merged[key] = Candidate(
+                theme=prev.theme if prev.ended_at >= c.ended_at else c.theme,
+                tokens=prev.tokens + c.tokens,
+                ended_at=max(prev.ended_at, c.ended_at),
+                started_at=min(prev.started_at, c.started_at),
+            )
+    return sorted(merged.values(), key=lambda c: c.started_at)

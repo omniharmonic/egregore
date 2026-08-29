@@ -124,3 +124,16 @@ def test_selection_carries_no_text():
     sel = select([cand(5, NOW, "a")], memory=[], weights=Weights(), now=NOW, tau_s=60)
     assert isinstance(sel, Selection)
     assert not hasattr(sel.winner, "text")
+
+
+def test_synthesis_room_bias_can_be_turned_down():
+    from egregore.types import MoodState
+    from egregore.weaver import synthesize_prompt
+    quiet = MoodState(energy=0.1, brightness=0.1)
+    t = theme("vast blue depth")
+    full = synthesize_prompt(t, "grammar", None, 0.4, quiet)
+    assert "bias the palette dark" in full
+    soft = synthesize_prompt(t, "grammar", None, 0.4, quiet, room_bias=0.5)
+    assert "bias the palette dark" not in soft and "the room is quiet" in soft
+    off = synthesize_prompt(t, "grammar", None, 0.4, quiet, room_bias=0.0)
+    assert "Room bias" not in off

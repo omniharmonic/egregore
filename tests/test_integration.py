@@ -645,3 +645,25 @@ async def test_fills_render_at_their_own_longer_duration(tmp_path):
         assert clips[0].backend == "procedural"
         assert clips[0].duration_s == 12.0
         slow.gate.set()
+
+
+async def test_lookback_limits_candidates_to_recent_speech(tmp_path):
+    # A thought from four minutes ago must not compete with what was said
+    # during the last render. Segments older than the lookback are dropped
+    # unless nothing newer exists.
+    cfg = _cfg(tmp_path, zones=[{"id": "main", "mic": {"type": "fixture"}}])
+    async with Party(cfg) as party:
+        pipe = party.pipelines["main"]
+        ring = pipe.ring
+        now = time.monotonic()
+        # Inside the ring's retention window, outside the lookback.
+        ring.add("the tide pools were glowing green under the kelp", t=now - 200)
+        ring.add("gears and pressure and copper and iron in the workshop", t=now - 5)
+        pipe.live.selection["lookback_s"] = 60.0
+        sel_cfg = pipe.live.selection_for("main")
+        segs = ring.segments(sel_cfg.segment_gap_s)
+        assert len(segs) == 2
+        theme = await pipe._choose_theme(segs, sel_cfg)
+        assert theme is not None
+        assert pipe.last_selection["candidates"] == 1
+        assert pipe.last_selection["age_s"] < 60

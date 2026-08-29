@@ -376,6 +376,14 @@
       min: 2, max: 8, step: 1 },
     { path: 'aesthetic.drift',         label: 'drift',      type: 'number',
       min: 0, max: 1, step: 0.05 },
+    { path: 'aesthetic.room_bias',     label: 'room bias',  type: 'number',
+      min: 0, max: 1, step: 0.25,
+      note: 'how much the sound of the room shapes the palette. 1: a quiet room '
+          + 'asks for a dark palette, a loud one for bright. 0.5: only energy and '
+          + 'rhythm. 0: the room is not mentioned' },
+    { path: 'weaver.selection.lookback_s', label: 'lookback s', type: 'number',
+      min: 10, max: 600, step: 10, nullable: true,
+      note: 'how far back a thought may come from. blank = about the last render' },
     { path: 'continuity.default_mode', label: 'continuity', type: 'select',
       options: ['mosaic', 'continuity'] },
     { path: 'continuity.topology',     label: 'topology',   type: 'select',

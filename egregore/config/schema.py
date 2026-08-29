@@ -29,6 +29,12 @@ class AestheticConfig(BaseModel):
     # already-abstracted motifs are drawn — the validator still runs, so a
     # literal picture is not a literal prompt.
     abstraction: float = Field(1.0, ge=0.0, le=1.0)
+    # How much the room's sound shapes the palette. At 1 a quiet room asks
+    # for a dark, low-frequency palette and a loud one for bright; at 0.5
+    # the palette bias is dropped and only energy and rhythm remain; at 0 the
+    # room is not mentioned. Every prompt in the first soak came out dark
+    # because a loopback rig is a quiet room.
+    room_bias: float = Field(1.0, ge=0.0, le=1.0)
 
 
 
@@ -59,6 +65,12 @@ class SelectionConfig(BaseModel):
     segment_gap_s: float = Field(6.0, ge=1.0, le=60.0)   # a pause this long ends a thought
     max_candidates: int = Field(6, ge=1, le=12)
     recency_tau_s: float | None = Field(None, ge=5.0)     # None = the last render's duration
+    # How far back a thought may come from. What was said during the last
+    # render is what the next clip should be about; the whole ring buffer is
+    # six minutes, and in the first soak a thought from four minutes earlier
+    # won. None = twice the last render, never under 90s. Older material is
+    # used only if nothing newer exists.
+    lookback_s: float | None = Field(None, ge=10.0)
 
     @model_validator(mode="after")
     def _some_weight(self) -> SelectionConfig:

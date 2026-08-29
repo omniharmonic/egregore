@@ -57,16 +57,19 @@ def _intensity_phrase(intensity: float) -> str:
     return "at full intensity — dense, surging motion, still smooth and continuous"
 
 
-def _mood_phrase(mood: MoodState) -> str:
+def _mood_phrase(mood: MoodState, room_bias: float = 1.0) -> str:
     bits: list[str] = []
     if mood.energy >= 0.66:
         bits.append("the room is loud and active")
     elif mood.energy <= 0.25:
         bits.append("the room is quiet")
-    if mood.brightness >= 0.66:
-        bits.append("bias the palette bright and high-frequency")
-    elif mood.brightness <= 0.25:
-        bits.append("bias the palette dark and low-frequency")
+    # The palette bias is the strongest thing the room's sound does to the
+    # picture, so it is the first thing an operator may want less of.
+    if room_bias >= 0.75:
+        if mood.brightness >= 0.66:
+            bits.append("bias the palette bright and high-frequency")
+        elif mood.brightness <= 0.25:
+            bits.append("bias the palette dark and low-frequency")
     if mood.onset_density >= 0.6:
         bits.append("let internal rhythm be frequent but never cut")
     elif mood.onset_density <= 0.2:
@@ -127,6 +130,7 @@ def synthesize_prompt(
     drift: float = 0.4,
     mood: MoodState | None = None,
     abstraction: float = 1.0,
+    room_bias: float = 1.0,
 ) -> str:
     """Compose the outbound generation prompt.
 
@@ -168,8 +172,8 @@ def synthesize_prompt(
     )
     parts.append(f"Movement: {theme.movement} — continuous, liquid, never cutting.")
 
-    if mood is not None:
-        parts.append(_mood_phrase(mood))
+    if mood is not None and room_bias > 0:
+        parts.append(_mood_phrase(mood, room_bias))
 
     if continuity and continuity.strip():
         parts.append(

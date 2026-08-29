@@ -384,7 +384,7 @@ def test_synthesis_signature_cannot_accept_raw_text():
 
     sig = inspect.signature(synthesize_prompt)
     assert set(sig.parameters) == {
-        "theme", "grammar", "continuity", "drift", "mood", "abstraction",
+        "theme", "grammar", "continuity", "drift", "mood", "abstraction", "room_bias",
     }
     # Only `grammar` and `continuity` are text, and both are operator-supplied
     # rather than room-supplied. Nothing else may be a string. Resolved with
@@ -392,6 +392,8 @@ def test_synthesis_signature_cannot_accept_raw_text():
     # raw signature reports these as the string "float".
     hints = typing.get_type_hints(synthesize_prompt)
     assert hints["abstraction"] is float
+    # `room_bias` likewise only gates fixed phrases about the room's sound.
+    assert hints["room_bias"] is float
     assert hints["drift"] is float
 
 
@@ -802,10 +804,10 @@ async def test_weave_candidates_keeps_the_longest_when_capped():
     segs = [
         seg("short one", 1),
         seg("this is a much longer stretch of talk about the ocean and its tides and light", 2),
-        seg("medium length talk about gears", 3),
+        seg("gears and pressure and copper machines in the workshop", 3),
     ]
     cands = await w.weave_candidates(segs, max_candidates=2)
-    assert sorted(c.tokens for c in cands) == [5, 16]
+    assert sorted(c.tokens for c in cands) == [9, 16]
 
 
 async def test_weave_candidates_drops_a_rejected_theme_without_purging():
@@ -826,3 +828,36 @@ async def test_weave_candidates_drops_a_rejected_theme_without_purging():
 
 async def test_weave_candidates_of_nothing_is_nothing():
     assert await Weaver().weave_candidates([]) == []
+
+
+async def test_fallback_theme_never_competes_with_a_real_one():
+    # The abstractor returns DEFAULT_MOTIFS when a segment matches nothing.
+    # In the first soak those "formless drift" candidates won selections
+    # against real themes — an unmatched sentence must not outrank a matched
+    # one. They survive only when nothing else did.
+    from egregore.weaver.abstractor import DEFAULT_MOTIFS
+    w = Weaver()
+    segs = [
+        seg("um yeah okay so anyway right", 1),                     # matches nothing
+        seg("the tide pools were glowing green under the kelp", 2),  # matches
+    ]
+    cands = await w.weave_candidates(segs)
+    assert len(cands) == 1
+    assert tuple(cands[0].theme.motifs) != DEFAULT_MOTIFS
+    only = await w.weave_candidates([seg("um yeah okay so anyway right", 1)])
+    assert len(only) == 1, "with nothing else, the fallback still yields a candidate"
+
+
+async def test_identical_themes_merge_and_their_words_add_up():
+    w = Weaver()
+    segs = [
+        seg("the tide pools were glowing green under the kelp tonight", 1),
+        seg("the tide pools glowing green under all that kelp", 2),
+        seg("gears and pressure and copper in the workshop", 3),
+    ]
+    cands = await w.weave_candidates(segs)
+    bags = [frozenset(c.theme.motifs) for c in cands]
+    assert len(bags) == len(set(bags)), "no two candidates share a theme"
+    tide = next(c for c in cands if "tide" in " ".join(c.theme.motifs).lower() or "depth" in " ".join(c.theme.motifs).lower())
+    assert tide.tokens == 10 + 9, "merged candidate carries both segments' words"
+    assert tide.ended_at == 2 and tide.started_at == 1 - 5
