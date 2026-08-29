@@ -1,6 +1,7 @@
 # Soak test against fal.ai: the same scripted conversation as soak-local,
 # rendered in the cloud. Budget is a hard ceiling. Run with tools/soak.py.
-party: { name: "Soak Cloud", duration_hours: 2 }
+# duration paces the budget: $2 over 20 minutes is a clip every ~90s.
+party: { name: "Soak Cloud", duration_hours: 0.33 }
 aesthetic: { abstraction: 0.5, drift: 0.35, room_bias: 0.5 }
 generation:
   backend: "fal"
@@ -13,7 +14,7 @@ weaver:
   engine: "auto"
   fallback_after_s: 120
   selection: { salience: 0.35, novelty: 0.3, recency: 0.35, segment_gap_s: 6 }
-budget: { total_usd: 3 }
+budget: { total_usd: 2 }
 continuity: { default_mode: "mosaic", loop_half_life_min: 30 }
 asr: { engine: "parakeet", language: "en" }
 zones:
