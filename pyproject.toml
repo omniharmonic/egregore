@@ -17,8 +17,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-asr = ["faster-whisper>=1.0"]
-mic = ["sounddevice>=0.4", "webrtcvad>=2.0"]
+# Local transcription. parakeet is the recommended engine on Apple silicon
+# (int8 ONNX, ~8x realtime); whisper is the CPU-anywhere alternative.
+parakeet = ["onnx-asr>=0.2", "onnxruntime>=1.17"]
+whisper = ["faster-whisper>=1.0"]
+asr = ["faster-whisper>=1.0"]                     # kept for older instructions
+# A real microphone. webrtcvad-wheels, not webrtcvad: the original imports
+# pkg_resources, which modern setuptools no longer ships.
+mic = ["sounddevice>=0.4", "webrtcvad-wheels>=2.0"]
+# Everything a local party needs, in one flag.
+local = ["onnx-asr>=0.2", "onnxruntime>=1.17", "sounddevice>=0.4", "webrtcvad-wheels>=2.0"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

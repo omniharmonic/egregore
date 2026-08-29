@@ -128,7 +128,7 @@ than a permissions one.
 | variable | effect |
 |---|---|
 | `EGREGORE_COMFY_WORKFLOW` | path to a ComfyUI graph in API format |
-| `EGREGORE_MIN_CLIP_INTERVAL_S` | pin the cadence floor; `0` disables throughput pacing |
-| `EGREGORE_MAX_QUEUE_DEPTH` | pending clips per zone before the loop backs off (default 3) |
+| `EGREGORE_COMFY_SEED_WORKFLOW` | the image-to-video graph used to continue a chain |
+| `EGREGORE_MIN_CLIP_INTERVAL_S` | pin a minimum spacing between renders (the dashboard's cadence floor does the same, live) |
 | `EGREGORE_PARAKEET_ONNX_DIR` | Parakeet ONNX model directory |
 | `EGREGORE_PROCEDURAL_CODEC` | codec for the ffmpeg renderer |

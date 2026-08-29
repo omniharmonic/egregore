@@ -1,87 +1,107 @@
-# Setup — from arrival to first imagery in under 30 minutes
+# Setup — from a fresh machine to a party
 
-## 0. What you need
+Four stages, each ending in something you can see. Stop at whichever one
+matches the hardware you have; every stage is a working party.
 
-- **Core node**: any Linux/macOS machine. For fully local generation: one
-  machine with a decent GPU (single-box mode is first-class — see
-  `presets/local.yaml`).
-- **Screens**: anything with a browser (laptop, mini-PC, TV stick, tablet).
-- **Mics**: USB condenser per zone, placed away from speakers.
-- **Network**: a dedicated router/AP for the party. Not venue guest wifi.
-- `ffmpeg` on the core node's PATH.
+If an AI assistant is helping you, hand it [AGENTS.md](../AGENTS.md) — the
+same walk with a verification command at every step.
 
-## 1. Install (5 min)
+## 1. The software (5 minutes, any machine)
 
 ```bash
-git clone <this repo> && cd egregore
-uv sync                      # core install — no GPU deps required
-# optional, per hardware:
-uv sync --extra asr          # faster-whisper local transcription
-uv sync --extra mic          # sounddevice + webrtcvad for USB mics
-```
-
-## 2. Smoke test with zero hardware (2 min)
-
-```bash
+git clone https://github.com/omniharmonic/egregore && cd egregore
+uv sync --extra dev
 uv run egregore run presets/demo.yaml
 ```
 
-Open `http://<core-ip>:8420/?zone=main` on any device on the network. Within
-a couple of minutes, abstract imagery driven by a scripted conversation
-appears. If this works, the whole pipeline works; everything else is
-swapping inputs and backends.
+Open <http://localhost:8420/?zone=main>. A scripted conversation is being
+turned into themes, prompts and procedural video, with effects over it. This
+is the whole pipeline; the rest is swapping in real inputs and a real
+renderer.
 
-## 3. Pick and edit a preset (10 min)
+Needs: `uv` (`curl -LsSf https://astral.sh/uv/install.sh | sh`) and `ffmpeg`
+(`brew install ffmpeg`).
 
-Copy the closest preset from `presets/` and edit:
-
-- `zones`: one per listening area, with its mic device and screens.
-- `budget.total_usd`: **this is the hard ceiling.** `0` = no cloud, ever.
-- `aesthetic.grammar`: the party's visual language — the highest-leverage
-  text in the system. Iterate on it.
-- `lens_stack` per zone/screen, from the ten lenses: `feedback`,
-  `kaleidoscope`, `flow`, `chroma`, `bloom`, `liquid` (organic), and
-  `glitch`, `pixelsort`, `crt`, `corrupt` (structured glitch art —
-  content-derived block displacement, luminance sorting, phosphor CRT,
-  datamosh-style corruption; all clear to clean when the room is quiet).
-  Tune live on any screen with `?stack=flow,glitch,crt`.
-- `serving.password_env`: export `EGREGORE_PARTY_PASSWORD=...` before start
-  (or leave unset on a trusted LAN — auth is then disabled).
-
-### Fully local stack (one GPU box)
-
-1. ASR: `asr.engine: faster-whisper` (CPU-capable) or `parakeet` (NeMo).
-2. Themes: run Ollama (`ollama pull qwen3:14b`), set `weaver.llm.base_url:
-   http://localhost:11434/v1`. Without an LLM the deterministic heuristic
-   abstractor runs — coarser themes, same privacy guarantees.
-3. Video: ComfyUI with an LTX-2 workflow at `generation.comfyui_url`. The
-   `procedural` ffmpeg renderer is always available underneath it and needs
-   nothing at all.
-
-### Cloud tier (optional)
-
-`export GEMINI_API_KEY=...`, set `generation.backend: auto` and a real
-budget. The ladder is cloud → local → procedural; exhausted budget or an
-outage fails over silently.
-
-## 4. Start the night (2 min)
+## 2. A real microphone and real transcription (15 minutes)
 
 ```bash
-uv run egregore run my-party.yaml
+uv sync --extra local          # sounddevice, webrtcvad-wheels, onnx-asr, onnxruntime
+uv run egregore setup          # tells you what it found
 ```
 
-The console prints the join URL and password once. On each screen: open the
-URL with its zone (`/?zone=hearth&screen=bar-panel`), enter password, tap to
-go fullscreen. Done — walk away.
+**Parakeet** (recommended; ~8× realtime on Apple silicon): download the int8
+ONNX export into `~/.egregore/models/parakeet-v2-int8/` — it needs
+`encoder-model.int8.onnx`, `decoder_joint-model.int8.onnx`, `nemo128.onnx`,
+`vocab.txt` and a `config.json` declaring `features_size: 128`. See
+[local-hardware.md](local-hardware.md#local-transcription). Or use
+`asr.engine: faster-whisper` (`uv sync --extra whisper`) on any CPU.
 
-- Operator dashboard: `http://<core-ip>:8420/static/status.html` (terminal-
-  style live view; raw JSON at `/api/status`). Controls: `POST
-  /api/control/freeze|mute|mode` — freeze generation, mute a zone, switch
-  mosaic/continuity live.
-- HUD on any screen: append `?hud=1`.
+macOS asks the terminal for microphone permission the first time. If you see
+`PortAudio -9986`, it was denied: System Settings → Privacy & Security →
+Microphone.
 
-## 5. Shutdown
+Run `presets/local.yaml` with `generation.backend: procedural` for now — real
+ears, free video — and speak near the machine. With `EGREGORE_MONITOR=1` the
+dashboard's **monitor** panel shows what it heard and the themes it made.
 
-Ctrl-C. Ring buffers zero on shutdown. Clips remain in `var/clips/` only if
-`privacy.export_dream: true`; otherwise wipe them with
-`uv run egregore wipe my-party.yaml`.
+## 3. A theme brain (5 minutes, strongly recommended)
+
+Install [LM Studio](https://lmstudio.ai) or [Ollama](https://ollama.com),
+load a **small chat model** (Qwen3-4B, Gemma-3-4B, Llama-3.1-8B — 4 to 8B is
+the right size; bigger takes a minute per thought and fights the video
+renderer for the GPU), and start the server. Egregore finds it on the next
+start and says so in the status page's *weaver engine* row.
+
+This is the difference between prompts made from a fixed vocabulary and
+prompts made from what people actually said.
+
+## 4. Local video (30–60 minutes, one GPU machine)
+
+Install [ComfyUI](https://github.com/comfyanonymous/ComfyUI) with two custom
+nodes — **ComfyUI-GGUF** and **ComfyUI-VideoHelperSuite** — and the
+LTX-Video 2B weights laid out as [local-hardware.md](local-hardware.md)
+describes. Start it on `:8188`.
+
+```bash
+EGREGORE_COMFY_WORKFLOW=$PWD/presets/comfyui/ltxv-2b-balanced.json \
+EGREGORE_COMFY_SEED_WORKFLOW=$PWD/presets/comfyui/ltxv-2b-seeded.json \
+EGREGORE_MONITOR=1 uv run egregore run presets/local.yaml
+```
+
+The first clip lands in about two minutes at the default `local_quality:
+balanced`. Too slow? `fast` on the dashboard. A workstation? `high`. The
+ComfyUI machine need not be this one: set `generation.comfyui_url`.
+
+### Or: cloud video instead of a GPU
+
+```bash
+uv run egregore setup            # paste FAL_KEY
+uv run egregore run presets/cloud.yaml
+```
+
+`budget.total_usd` is a hard ceiling. See [fal-setup.md](fal-setup.md).
+
+## 5. The room
+
+- **Screens:** any browser. `http://<host>:8420/?zone=main&screen=<name>`,
+  tap to go fullscreen. Name screens in the preset to give each its own
+  effects.
+- **Phones:** the join address the banner prints. *listen* makes a phone a
+  microphone for a room; *show* makes it a screen. `presets/two-rooms.yaml`
+  is the multi-room starting point.
+- **Network:** a router you control, not venue guest wifi (which often blocks
+  device-to-device traffic).
+- **Signage:** [signage.md](signage.md). The join page shows the notice.
+- **Password:** `export EGREGORE_PARTY_PASSWORD=...` before starting if the
+  network is not trusted. Settings always need it or the host machine.
+
+## 6. During and after
+
+Everything on `/static/setup.html` is live: the grammar, abstraction, room
+bias, quality, speed, crossfade, linger, the selection sliders, the effects.
+`/static/status.html` shows clips, chain, lag, and what each screen is
+playing. [PARAMETERS.md](PARAMETERS.md) explains every one.
+
+Ctrl-C stops the party, cancels renders in flight, and zeroes the ring
+buffers. Clips stay in `var/clips-*/` so the next start does not go dark;
+`uv run egregore wipe <preset>` removes them.

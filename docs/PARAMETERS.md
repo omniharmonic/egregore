@@ -72,9 +72,9 @@ three weights need not sum to one.
 | `continuity.default_mode` | `continuity` in `local` | `continuity`: each clip grows out of the last one's final frame, in movements of `max_chain_length`. `mosaic`: independent clips (cloud models cannot continue their own clips). |
 | `continuity.max_chain_length` | 8 | Clips per movement before a fresh start. |
 | `continuity.topology` | `independent` | `independent`: each room hears itself. `commons`: one conversation, a loop per room. `mirror`: one conversation, one loop on every screen. **restart** |
-| `continuity.loop_half_life_min` | 40 | How long a clip stays in heavy rotation. |
-| `continuity.loop_floor_weight` | 0.2 | Even old clips keep this much chance of playing. |
-| `continuity.active_pool_max` | 120 | Clips kept in rotation before the oldest are archived. |
+| `continuity.loop_half_life_min` | 45 (40 in `local`) | How long a clip stays in heavy rotation. |
+| `continuity.loop_floor_weight` | 0.15 (0.2 in `local`) | Even old clips keep this much chance of playing. |
+| `continuity.active_pool_max` | 200 (120 in `local`) | Clips kept in rotation before the oldest are archived. |
 | `zones[].playback_rate` (**speed**) | 0.7 | Below 1 the motion is languid and each clip holds the screen longer. |
 | `zones[].crossfade_s` (**crossfade**) | 4 | Seconds one clip takes to dissolve into the next. |
 | `zones[].hold_s` (**linger**) | 20 | The least wall time a composition stays up. A shorter clip dissolves into itself to get there. 0 = its own length. |
@@ -113,4 +113,6 @@ three weights need not sum to one.
 | `EGREGORE_PARTY_PASSWORD` | Require a password to watch and to configure. |
 | `EGREGORE_MIN_CLIP_INTERVAL_S` | Pin a minimum spacing between renders (the dashboard's cadence floor does the same, live). |
 | `EGREGORE_MIN_TRANSCRIPT_WORDS` | Drop transcriptions shorter than this (default 3) — a room with music makes the recogniser invent short words. |
+| `EGREGORE_PARAKEET_ONNX_DIR` | Parakeet ONNX model directory (default `~/.egregore/models/parakeet-v2-int8`). |
+| `EGREGORE_PROCEDURAL_CODEC` | Codec for the procedural renderer (`h264` default; `vp9` for browsers without H.264). |
 | `EGREGORE_HOME` | Where `env`, `settings.yaml` and `models.yaml` live (default `~/.egregore`). |
