@@ -48,6 +48,12 @@ LIVE_KEYS: frozenset[str] = frozenset({
     "aesthetic.grammar",
     "aesthetic.abstraction",
     "cadence_floor_s",
+    "weaver.selection.salience",
+    "weaver.selection.novelty",
+    "weaver.selection.recency",
+    "weaver.selection.segment_gap_s",
+    "weaver.selection.max_candidates",
+    "weaver.selection.recency_tau_s",
 })
 
 #: Settings read once at start-up. Changing these builds a different backend

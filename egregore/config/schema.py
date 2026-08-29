@@ -46,9 +46,31 @@ class WeaverLLMConfig(BaseModel):
     api_key_env: str = "EGREGORE_LLM_API_KEY"  # most local servers need none
 
 
+class SelectionConfig(BaseModel):
+    """How the next theme is chosen from everything said since the last clip.
+
+    Weights are normalised at scoring time; they need not sum to one. All
+    fields are live-settable, per zone with a party default.
+    """
+
+    salience: float = Field(0.5, ge=0.0, le=1.0)   # what the room dwelt on
+    novelty: float = Field(0.3, ge=0.0, le=1.0)    # distance from what was just shown
+    recency: float = Field(0.2, ge=0.0, le=1.0)    # how fresh
+    segment_gap_s: float = Field(6.0, ge=1.0, le=60.0)   # a pause this long ends a thought
+    max_candidates: int = Field(6, ge=1, le=12)
+    recency_tau_s: float | None = Field(None, ge=5.0)     # None = the last render's duration
+
+    @model_validator(mode="after")
+    def _some_weight(self) -> SelectionConfig:
+        if self.salience + self.novelty + self.recency <= 0:
+            raise ValueError("at least one selection weight must be above zero")
+        return self
+
+
 class WeaverConfig(BaseModel):
     engine: Literal["auto", "llm", "heuristic"] = "auto"  # auto = llm if configured
     llm: WeaverLLMConfig = Field(default_factory=WeaverLLMConfig)
+    selection: SelectionConfig = Field(default_factory=SelectionConfig)
 
 
 class GenerationConfig(BaseModel):
@@ -165,6 +187,7 @@ class ZoneConfig(BaseModel):
     # difference between a loop that pulses and one that flickers past.
     playback_rate: float = Field(1.0, ge=0.25, le=2.0)
     crossfade_s: float | None = Field(None, gt=0.0, le=12.0)  # None = manifest default
+    selection: SelectionConfig | None = None  # None = weaver.selection
     screens: list[str] = Field(default_factory=list)
 
 
@@ -226,6 +249,12 @@ class EgregoreConfig(BaseModel):
             if z.id == zone_id and z.continuity_mode is not None:
                 return z.continuity_mode
         return self.continuity.default_mode
+
+    def zone_selection(self, zone_id: str) -> SelectionConfig:
+        for z in self.zones:
+            if z.id == zone_id and z.selection is not None:
+                return z.selection
+        return self.weaver.selection
 
 
 def load_config(path: str | Path) -> EgregoreConfig:

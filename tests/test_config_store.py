@@ -240,3 +240,37 @@ def test_a_dotted_key_colliding_with_a_non_dict_is_refused():
     # Silently discarding either value would be worse than saying so.
     with pytest.raises(ValueError, match="conflicts"):
         store.expand_dotted({"generation": 3, "generation.local_steps": 8})
+
+
+# ---------------------------------------------------------------------------
+# Selection config — party default, zone override, live keys
+# ---------------------------------------------------------------------------
+
+
+def test_selection_defaults():
+    cfg = EgregoreConfig()
+    s = cfg.weaver.selection
+    assert (s.salience, s.novelty, s.recency) == (0.5, 0.3, 0.2)
+    assert s.segment_gap_s == 6.0 and s.max_candidates == 6 and s.recency_tau_s is None
+
+
+def test_selection_all_zero_weights_rejected():
+    with pytest.raises(ValueError, match="weight"):
+        EgregoreConfig.model_validate(
+            {"weaver": {"selection": {"salience": 0, "novelty": 0, "recency": 0}}}
+        )
+
+
+def test_zone_selection_overrides_party_default():
+    cfg = EgregoreConfig.model_validate({
+        "weaver": {"selection": {"novelty": 0.9}},
+        "zones": [{"id": "a"}, {"id": "b", "selection": {"novelty": 0.1}}],
+    })
+    assert cfg.zone_selection("a").novelty == 0.9
+    assert cfg.zone_selection("b").novelty == 0.1
+    assert cfg.zone_selection("b").salience == 0.5, "unset fields fall to the schema default"
+
+
+def test_selection_keys_are_live():
+    for k in ("salience", "novelty", "recency", "segment_gap_s", "max_candidates", "recency_tau_s"):
+        assert f"weaver.selection.{k}" in store.LIVE_KEYS
