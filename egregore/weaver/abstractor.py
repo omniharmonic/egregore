@@ -702,7 +702,9 @@ class LLMAbstractor:
             system += _CONCRETE_NUDGE
         if attempt:
             system += _ATTEMPT_NUDGE
-        user = window_text
+        # The soft switch for the same thing, for servers that read it from
+        # the message rather than the request.
+        user = window_text + " /no_think"
         if mood is not None:
             user = (
                 f"[room energy {mood.energy:.2f}, brightness {mood.brightness:.2f}]\n"
@@ -717,6 +719,11 @@ class LLMAbstractor:
             "temperature": self.temperature + (0.2 if attempt else 0.0),
             "max_tokens": self.max_tokens,
             "stream": False,
+            # Stage 1 is a five-motif extraction, not a reasoning task. Models
+            # with a "thinking" mode (Qwen3 and kin) spend most of their time
+            # in it; this asks the server to skip it. Servers that do not
+            # know the key ignore it.
+            "chat_template_kwargs": {"enable_thinking": False},
         }
 
     async def abstract(
