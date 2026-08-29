@@ -61,7 +61,7 @@ Read the table it prints. Each row is a capability and how to get it:
 | `ffmpeg` MISSING | procedural renderer cannot run | install ffmpeg |
 | `comfyui` not running | no local video model | section 5 |
 | `parakeet` not installed | no local transcription | section 4 |
-| `audio_input` sounddevice not installed | no live microphone | `uv sync --extra mic` |
+| `audio_input` sounddevice not installed | no live microphone | `uv sync --extra local` |
 | `FAL_KEY` not set | no cloud video | paste it here, or skip |
 
 It then asks for keys (blank to skip) and which preset to use. Keys go to
@@ -70,7 +70,7 @@ It then asks for keys (blank to skip) and which preset to use. Keys go to
 ## 4. Local transcription (Parakeet)
 
 ```bash
-uv sync --extra mic
+uv sync --extra local          # sounddevice, webrtcvad-wheels, onnx-asr, onnxruntime
 # Parakeet ONNX (int8) — see docs/local-hardware.md for the download; it lands at:
 ls ~/.egregore/models/parakeet-v2-int8/config.json
 ```
