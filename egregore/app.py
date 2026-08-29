@@ -544,9 +544,10 @@ class ZonePipeline:
         the next render slot finds them ready instead of waiting on stage 1."""
         try:
             self.weaver.abstraction = self.live.abstraction
+            gap = self.live.selection_for(self.zone).segment_gap_s
             self.weaver.prime(
-                self.ring.segments(self.live.selection_for(self.zone).segment_gap_s),
-                self.mood.state(),
+                self.ring.segments(gap), self.mood.state(),
+                now=time.monotonic(), gap_s=gap,
             )
         except Exception:  # noqa: BLE001 - priming is an optimisation, never a failure
             log.exception("zone %s: prime failed", self.zone)
@@ -632,6 +633,7 @@ class ZonePipeline:
             try:
                 if self.bus.frozen:
                     continue  # operator freeze: loop keeps playing, nothing new
+                self._prime()
                 spaced = self.governor.should_generate(self.zone)
                 busy = (
                     self.forge.in_flight(self.zone) > 0

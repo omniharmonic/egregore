@@ -1057,3 +1057,20 @@ def test_think_tags_are_stripped_before_json_is_read():
     from egregore.weaver.abstractor import _extract_first_json_object
     reply = '<think>\nsome private reasoning {not json}\n</think>\n{"motifs": ["a"], "register": "ambient"}'
     assert _extract_first_json_object(reply)["motifs"] == ["a"]
+
+
+async def test_the_last_segment_is_primed_once_the_pause_has_passed():
+    # The freshest thought is always the open segment. It is only "open"
+    # while another fragment could still join it; after a pause longer than
+    # the gap it is closed by definition and should be worked out too, or
+    # the thought most likely to win on recency is the one never primed.
+    slow = SlowCounting()
+    w = Weaver(slow)
+    segs = [seg("the tide pools were glowing green tonight", 10),
+            seg("gears and pressure and copper machines", 20)]
+    w.prime(segs, now=21.0, gap_s=6.0)          # 1s since the last word: still open
+    await w.drain(timeout=2.0)
+    assert slow.calls == 1
+    w.prime(segs, now=30.0, gap_s=6.0)          # 10s of silence: closed
+    await w.drain(timeout=2.0)
+    assert slow.calls == 2

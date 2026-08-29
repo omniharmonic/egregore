@@ -225,15 +225,29 @@ class Weaver:
         """The validated theme for a segment, if it has been worked out."""
         return self._cache.get(self._key(segment.text))
 
-    def prime(self, segments, mood: MoodState | None = None) -> int:
+    def prime(
+        self,
+        segments,
+        mood: MoodState | None = None,
+        *,
+        now: float | None = None,
+        gap_s: float | None = None,
+    ) -> int:
         """Queue every *closed* segment for background abstraction.
 
         The last segment may still grow as the room keeps talking, so it is
-        left for the moment a render actually needs it. Newest first, so a
-        slow brain spends its time on what the next clip is likeliest to be
-        about. Returns how many were queued.
+        left alone — unless ``now`` and ``gap_s`` say a pause longer than the
+        gap has already passed since its last word, in which case it is
+        closed by definition and is queued too (it is the thought likeliest
+        to win on recency, so it must not be the one never primed). Newest
+        first, so a slow brain spends its time on what the next clip is
+        likeliest to be about. Returns how many were queued.
         """
-        closed = list(segments)[:-1]
+        segments = list(segments)
+        closed = segments[:-1]
+        if segments and now is not None and gap_s is not None:
+            if now - segments[-1].ended_at >= gap_s:
+                closed = segments
         queued = 0
         for s in reversed(closed):
             k = self._key(s.text)
