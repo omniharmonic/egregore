@@ -72,6 +72,7 @@ class Weaver:
         stage1_budget_s: float = 10.0,
         cache_size: int = 64,
         max_slow_calls: int = 3,
+        background_timeout_s: float | None = None,
     ) -> None:
         self.abstractor: Abstractor = abstractor or HeuristicAbstractor()
         self.min_window_tokens = min_window_tokens
@@ -97,6 +98,12 @@ class Weaver:
         # it thought. After max_slow_calls consecutive misses the heuristic
         # takes over for the rest of the party, and status says why.
         self.max_slow_calls = int(max_slow_calls)
+        #: How long an unhurried background call may take before it is a
+        #: stall. Default: a minute, or four budgets, whichever is longer.
+        self.background_timeout_s = (
+            float(background_timeout_s) if background_timeout_s is not None
+            else max(60.0, 4.0 * self.stage1_budget_s)
+        )
         self._slow_streak = 0
         self._stood_down: str | None = None
         # Counters are content-blind and safe to surface in ZoneStatus.
@@ -114,21 +121,31 @@ class Weaver:
             return f"heuristic ({self._stood_down})"
         return getattr(self.abstractor, "name", "heuristic")
 
-    def _note_call(self, seconds: float, *, timed_out: bool) -> None:
+    def _note_background(self, *, ok: bool) -> None:
+        """Only unhurried calls judge the brain. A foreground miss is usually
+        a render slot opening while a background call holds the server —
+        the heuristic stands in for that one thought and nothing is
+        concluded. A brain that cannot answer even with a minute to itself
+        is stood down for the party."""
         if self._stood_down or isinstance(self.abstractor, HeuristicAbstractor):
             return
-        if timed_out or seconds > self.stage1_budget_s:
-            self._slow_streak += 1
-            if self._slow_streak >= self.max_slow_calls:
-                self._stood_down = (
-                    f"{getattr(self.abstractor, 'name', 'llm')} too slow for this machine: "
-                    f"{self._slow_streak} calls over {self.stage1_budget_s:.0f}s"
-                )
-                log.warning("weaver: %s — the heuristic takes over", self._stood_down)
-                self.abstractor = self._heuristic
-                self._queue.clear()
-        else:
+        if ok:
             self._slow_streak = 0
+            return
+        self._slow_streak += 1
+        if self._slow_streak >= self.max_slow_calls:
+            self._stood_down = (
+                f"{getattr(self.abstractor, 'name', 'llm')} too slow for this machine: "
+                f"{self._slow_streak} unhurried calls failed"
+            )
+            log.warning("weaver: %s — the heuristic takes over", self._stood_down)
+            self.abstractor = self._heuristic
+            self._queue.clear()
+
+    @property
+    def busy(self) -> bool:
+        """A background abstraction is holding the brain right now."""
+        return bool(self._pending)
         # Counters are content-blind and safe to surface in ZoneStatus.
 
     async def weave(
@@ -252,18 +269,21 @@ class Weaver:
                 # against the brain. Only a true stall is given up on.
                 candidate = await asyncio.wait_for(
                     self.abstractor.abstract(text, mood, attempt=0),
-                    timeout=max(60.0, 4.0 * self.stage1_budget_s),
+                    timeout=self.background_timeout_s,
                 )
+                self._note_background(ok=True)
                 if validate_theme(candidate, text).ok:
                     theme = candidate
                 else:
                     self.rejections += 1
             except TimeoutError:
+                self._note_background(ok=False)
                 log.warning("weaver background stage-1 stalled; skipped")
             except AbstractionError as exc:
                 # The message is content-free by construction (endpoint
                 # error class or parse failure), so it is safe to log and is
                 # the only way to tell a timeout from a bad reply.
+                self._note_background(ok=False)
                 log.warning("weaver background stage-1 failed: %s", exc)
             except asyncio.CancelledError:
                 raise
@@ -285,20 +305,21 @@ class Weaver:
         Bounded, so a slow LLM costs quality on this one thought rather than
         lag on the whole wall: past the budget the heuristic answers instead.
         """
+        if self.busy and not isinstance(self.abstractor, HeuristicAbstractor):
+            # A local server answers one request at a time: queueing behind
+            # our own background work would spend the whole budget waiting.
+            # The heuristic stands in for this one thought.
+            return await self._heuristic.abstract(text, mood, attempt=0)
         self._steer()
-        started = asyncio.get_event_loop().time()
         try:
-            theme = await asyncio.wait_for(
+            return await asyncio.wait_for(
                 self.abstractor.abstract(text, mood, attempt=0),
                 timeout=self.stage1_budget_s,
             )
         except TimeoutError:
-            self._note_call(self.stage1_budget_s, timed_out=True)
             log.warning("weaver stage-1 over budget (%.0fs); heuristic stands in",
                         self.stage1_budget_s)
             return await self._heuristic.abstract(text, mood, attempt=0)
-        self._note_call(asyncio.get_event_loop().time() - started, timed_out=False)
-        return theme
 
     async def weave_candidates(
         self,

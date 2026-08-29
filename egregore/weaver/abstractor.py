@@ -670,7 +670,7 @@ class LLMAbstractor:
         model: str | None = None,
         api_key: str | None = None,
         *,
-        timeout: float = 30.0,
+        timeout: float = 90.0,
         temperature: float = 0.4,
         max_tokens: int = 900,
         client: Any | None = None,

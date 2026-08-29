@@ -996,28 +996,49 @@ def test_autodetect_prefers_the_smallest_chat_model(monkeypatch):
     assert a.model == "google/gemma-3-4b"
 
 
-async def test_a_brain_too_slow_for_this_machine_steps_aside():
+class Stalling:
+    """A brain that never answers — the case that must stand it down."""
+
+    name = "stalling"
+    abstraction = 1.0
+
+    async def abstract(self, text, mood=None, *, attempt=0):
+        await _asyncio.sleep(10)
+        return ThemeObject(motifs=["never"])
+
+
+async def test_a_brain_that_cannot_answer_unhurried_steps_aside():
     # Measured: a 27B model sharing the GPU with the video renderer took
-    # 175s a call and stretched a 100s render to 462s. A brain that keeps
-    # missing the budget must hand over to the heuristic and say so, or the
-    # wall goes procedural while it thinks.
+    # 175s a call and stretched a 100s render to 462s. A brain that fails
+    # even with a minute to itself must hand over to the heuristic and say
+    # so, or the wall goes procedural while it thinks.
+    w = Weaver(Stalling(), stage1_budget_s=0.01, max_slow_calls=2, background_timeout_s=0.05)
+    segs = [seg(f"the tide pools were glowing green tonight number {i}", i) for i in range(4)]
+    w.prime(segs)
+    await w.drain(timeout=5.0)
+    assert w.engine_name.startswith("heuristic") and "too slow" in w.engine_name
+
+
+async def test_a_foreground_miss_alone_never_stands_the_brain_down():
+    # A render slot opening while the server is busy is not the brain's
+    # fault: the heuristic stands in for that thought and nothing more.
     slow = SlowCounting(delay=0.3)
-    w = Weaver(slow, stage1_budget_s=0.05, max_slow_calls=2)
+    w = Weaver(slow, stage1_budget_s=0.05, max_slow_calls=1)
     for i in range(3):
         await w.weave_candidates([seg(f"the tide pools were glowing green tonight number {i}", i)])
-    assert w.engine_name.startswith("heuristic")
-    assert "too slow" in w.engine_name
-    calls = slow.calls
-    await w.weave_candidates([seg("gears and pressure and copper machines", 9)])
-    assert slow.calls == calls, "the slow brain is no longer consulted"
-
-
-async def test_a_brain_within_budget_is_kept():
-    quick = SlowCounting(delay=0.0)
-    w = Weaver(quick, stage1_budget_s=1.0, max_slow_calls=2)
-    for i in range(4):
-        await w.weave_candidates([seg(f"the tide pools were glowing green tonight number {i}", i)])
     assert w.engine_name == "slow"
+
+
+async def test_the_foreground_does_not_queue_behind_the_background():
+    # The server answers one request at a time; waiting behind our own
+    # background call would spend the budget on nothing.
+    slow = SlowCounting(delay=0.5)
+    w = Weaver(slow, stage1_budget_s=5.0)
+    w.prime([seg("the tide pools were glowing green tonight", 1), seg("open thought", 2)])
+    await _asyncio.sleep(0.05)                      # the worker is now busy
+    cands = await w.weave_candidates([seg("gears and pressure and copper in the workshop", 3)])
+    assert cands and "words" not in " ".join(cands[0].theme.motifs), "heuristic stood in"
+    await w.drain(timeout=5.0)
 
 
 async def test_background_calls_do_not_count_against_the_brain():
