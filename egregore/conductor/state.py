@@ -295,6 +295,9 @@ class ConductorState:
             # screen longer, which is what separates a loop that pulses from
             # one that flickers past.
             "playback_rate": inherit("playback_rate", 1.0),
+            # Linger: least wall time a clip holds the screen (0 = its own
+            # length). A short clip dissolves into itself to meet it.
+            "hold_s": inherit("hold_s", 0.0),
             "loop_phase_offset": inherit("loop_phase_offset", 0.0),
             # Screen overrides zone, zone overrides the default — the same
             # precedence lens_stack uses. Reading this from the screen alone

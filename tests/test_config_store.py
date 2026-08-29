@@ -274,3 +274,15 @@ def test_zone_selection_overrides_party_default():
 def test_selection_keys_are_live():
     for k in ("salience", "novelty", "recency", "segment_gap_s", "max_candidates", "recency_tau_s"):
         assert f"weaver.selection.{k}" in store.LIVE_KEYS
+
+
+def test_linger_and_fill_duration_defaults():
+    cfg = EgregoreConfig()
+    assert cfg.zones[0].hold_s == 0.0, "0 = a clip's own length"
+    assert cfg.generation.fill_duration_s == 12
+    assert "generation.fill_duration_s" in store.LIVE_KEYS
+
+
+def test_hold_is_bounded():
+    with pytest.raises(ValueError):
+        EgregoreConfig.model_validate({"zones": [{"id": "a", "hold_s": 1000}]})

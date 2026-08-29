@@ -776,3 +776,15 @@ def test_zone_selection_rejects_a_bad_weight(cfg_home):
         client.post("/api/join", json={"password": "pw"})
         r = client.post("/api/zones/main", json={"selection": {"novelty": 7}})
         assert r.status_code == 400
+
+
+def test_zone_hold_reaches_the_screen_config(cfg_home):
+    state = _zoned_state()
+    app = create_app(state, lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        r = client.post("/api/zones/main", json={"hold_s": 25})
+        assert r.status_code == 200, r.text
+        assert client.get("/api/config?zone=main").json()["hold_s"] == 25.0
+        assert client.get("/api/zones").json()["zones"]["main"]["hold_s"] == 25.0
+        assert client.post("/api/zones/main", json={"hold_s": -1}).status_code == 400

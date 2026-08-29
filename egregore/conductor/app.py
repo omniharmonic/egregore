@@ -553,6 +553,7 @@ def create_app(
                 "audio_source": client.get("audio_source", "zone"),
                 "crossfade_s": client.get("crossfade_s", 2.0),
                 "playback_rate": client.get("playback_rate", 1.0),
+                "hold_s": client.get("hold_s", 0.0),
                 # What is actually in effect: party default from the preset,
                 # then the zone's preset override, then anything changed live.
                 # Returning only the live override made the sliders show the
@@ -625,6 +626,18 @@ def create_app(
                     "playback_rate must be between 0.25 and 2.0",
                 )
             allowed["playback_rate"] = rate
+        if "hold_s" in patch:
+            try:
+                hold = float(patch["hold_s"])
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST, "hold_s must be a number"
+                ) from exc
+            if not 0.0 <= hold <= 300.0:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST, "hold_s must be between 0 and 300"
+                )
+            allowed["hold_s"] = hold
         if "crossfade_override" in patch:
             try:
                 xf = float(patch["crossfade_override"])

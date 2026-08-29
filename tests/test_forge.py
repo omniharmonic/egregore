@@ -190,7 +190,7 @@ def test_store_temp_path_is_on_the_store_filesystem(store: ClipStore) -> None:
 
 def test_mock_capabilities(store: ClipStore) -> None:
     caps = MockBackend(store).capabilities
-    assert caps.allowed_durations_s == frozenset({2, 4, 6, 8})
+    assert caps.allowed_durations_s == frozenset({2, 4, 6, 8, 12, 16})
     assert caps.supports_native_extend is False
     assert caps.supports_image_seed is True
     assert caps.tiers == frozenset({"mock"})

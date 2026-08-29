@@ -930,7 +930,9 @@
       [['playback_rate', 'speed', 0.25, 1.5, 0.05, z.playback_rate || 1.0,
         'below 1 the motion is languid and each clip holds longer'],
        ['crossfade_override', 'crossfade', 0.5, 10.0, 0.25, z.crossfade_s || 2.0,
-        'seconds one clip takes to dissolve into the next']
+        'seconds one clip takes to dissolve into the next'],
+       ['hold_s', 'linger', 0, 120, 1, z.hold_s || 0,
+        'least seconds a composition stays up — a short clip dissolves into itself to get there. 0 = its own length']
       ].forEach(function (spec) {
         var key = spec[0], name = spec[1];
         var row = document.createElement('div');

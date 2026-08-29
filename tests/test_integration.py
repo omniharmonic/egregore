@@ -630,3 +630,18 @@ async def test_a_silent_room_does_eventually_render_from_mood(tmp_path):
         while party.forge.paid_completed("main") == 0 and time.monotonic() < deadline:
             await asyncio.sleep(0.2)
         assert party.forge.paid_completed("main") >= 1
+
+
+async def test_fills_render_at_their_own_longer_duration(tmp_path):
+    # Fills are free, so they should be long enough to linger on — not the
+    # four seconds the paid backend's render time dictates.
+    cfg = _cfg(tmp_path, zones=[{"id": "main", "mic": {"type": "fixture"}}])
+    store = ClipStore(Path(cfg.clip_store_dir))
+    slow = GatedMock(store, name="local")
+    free = MockBackend(store, name="procedural")
+    async with Party(cfg, ladder=[slow, free]) as party:
+        party.live.fill_interval_s = 0.5
+        clips = await _wait_store(store, 1, timeout=60)
+        assert clips[0].backend == "procedural"
+        assert clips[0].duration_s == 12.0
+        slow.gate.set()

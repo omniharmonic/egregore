@@ -227,6 +227,8 @@ class LiveSettings:
     #: enough to work with, and every further fill would only dilute the
     #: diffusion clips the party is paying for.
     fill_pool_floor: int = 6
+    #: How long a free fill runs — free, so long enough to linger on.
+    fill_duration_s: int = 12
     #: Local diffusion effort. Properties of the machine rather than of the
     #: workflow file, so the same graph serves a laptop and a DGX, and so an
     #: operator can trade fidelity for responsiveness while the room is
@@ -280,6 +282,7 @@ class LiveSettings:
             local_steps=cfg.generation.local_steps,
             local_resolution=cfg.generation.local_resolution,
             fallback_after_s=cfg.weaver.fallback_after_s,
+            fill_duration_s=cfg.generation.fill_duration_s,
             selection=cfg.weaver.selection.model_dump(),
             selection_by_zone={
                 z.id: z.selection.model_dump(exclude_unset=True)
@@ -302,6 +305,9 @@ class LiveSettings:
         if "resolution" in gen:
             self.resolution = str(gen["resolution"])
             changed.append("generation.resolution")
+        if "fill_duration_s" in gen:
+            self.fill_duration_s = int(gen["fill_duration_s"])
+            changed.append("generation.fill_duration_s")
         if "local_steps" in gen:
             raw = gen["local_steps"]
             self.local_steps = int(raw) if raw not in (None, "") else None
@@ -643,7 +649,7 @@ class ZonePipeline:
                     await self.forge.request(
                         zone=self.zone,
                         prompt=prompt,
-                        duration_s=self.live.clip_duration_s,
+                        duration_s=self.live.fill_duration_s if fill else self.live.clip_duration_s,
                         tier=cfg.generation.model,
                         theme_hint=borrowed,
                         seed_image=plan.seed_image,
@@ -709,7 +715,7 @@ class ZonePipeline:
                 await self.forge.request(
                     zone=self.zone,
                     prompt=prompt,
-                    duration_s=self.live.clip_duration_s,
+                    duration_s=self.live.fill_duration_s if fill else self.live.clip_duration_s,
                     tier=cfg.generation.model,
                     theme_hint=theme,
                     seed_image=plan.seed_image,
@@ -852,6 +858,7 @@ def _zone_config_map(cfg: EgregoreConfig) -> dict[str, dict]:
             "lens_params": {},
             "crossfade_s": 2.0,
             "playback_rate": z.playback_rate,
+            "hold_s": z.hold_s,
             "crossfade_override": z.crossfade_s,
             "screens": {
                 sid: {

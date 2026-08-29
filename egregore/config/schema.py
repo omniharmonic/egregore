@@ -98,6 +98,10 @@ class GenerationConfig(BaseModel):
     # settings appropriate to each. None means "leave whatever the graph
     # already specifies alone", so an operator's own graph is never
     # second-guessed.
+    # How long a free procedural fill runs. Separate from clip_duration_s,
+    # which is sized for what the paid backend can render in time: a fill
+    # costs nothing, and a composition worth lingering on should be long.
+    fill_duration_s: int = Field(12, ge=2, le=16)
     local_steps: int | None = Field(None, ge=1, le=100)
     local_resolution: str | None = None  # e.g. "512x320"
 
@@ -192,6 +196,10 @@ class ZoneConfig(BaseModel):
     # difference between a loop that pulses and one that flickers past.
     playback_rate: float = Field(1.0, ge=0.25, le=2.0)
     crossfade_s: float | None = Field(None, gt=0.0, le=12.0)  # None = manifest default
+    # Linger: the least wall time a clip holds the screen. A clip shorter
+    # than this dissolves into itself rather than cutting to the next, so a
+    # composition can be looked at. 0 = the clip's own length.
+    hold_s: float = Field(0.0, ge=0.0, le=300.0)
     selection: SelectionConfig | None = None  # None = weaver.selection
     screens: list[str] = Field(default_factory=list)
 

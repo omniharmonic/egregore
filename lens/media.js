@@ -143,6 +143,8 @@ export class Playlist {
     // or as frantic, because it lengthens the shot and slows the movement in
     // it at the same time.
     this.playbackRate = 1;
+    // Linger: least wall seconds a clip holds the screen. 0 = its own length.
+    this.hold = 0;
     // A per-screen crossfade from /api/config is more specific than the
     // zone-wide one in the manifest, so it must not be clobbered on refresh.
     this.crossfadePinned = false;
@@ -255,6 +257,19 @@ export class Deck {
     return Math.max(0.2, Math.min(this.pl.crossfade || 2, d * 0.45));
   }
 
+  /** Has the active clip held the screen for the configured linger yet? */
+  _heldEnough() {
+    const hold = this.pl.hold || 0;
+    if (hold <= 0 || !this._shownAt) return true;
+    return (performance.now() - this._shownAt) / 1000 >= hold;
+  }
+
+  /** The next entry: the same clip again while it still has to linger. */
+  _next() {
+    if (!this._heldEnough() && this._entry[this.active]) return this._entry[this.active];
+    return this.pl.pick();
+  }
+
   _dur(i) {
     const el = this.v[i];
     if (Number.isFinite(el.duration) && el.duration > 0.2) return el.duration;
@@ -292,6 +307,7 @@ export class Deck {
     const e = this.pl.pick();
     if (!e) return false;
     this.active = 0; this.mix = 0; this.fading = false; this.armed = false;
+    this._shownAt = performance.now();
     return this._load(0, e);
   }
 
@@ -352,6 +368,9 @@ export class Deck {
       this.mix = Math.max(0, Math.min(1, this.mix + dir * (dt / xf)));
       if ((dir > 0 && this.mix >= 1) || (dir < 0 && this.mix <= 0)) {
         this.fading = false;
+        // A clip dissolving into itself is still the same composition on
+        // screen: the linger clock keeps running rather than restarting.
+        if (this.clipId[b] !== this.clipId[a]) this._shownAt = performance.now();
         this.active = b;
         this.armed = false;
         this._pending = false;
@@ -372,7 +391,10 @@ export class Deck {
 
     if (!this._pending && remaining <= xf + lead) {
       this._pending = true;
-      const e = this.pl.pick();
+      // While the clip still has to linger, the "next" clip is itself: the
+      // field dissolves back into its own beginning through the same
+      // two-slot crossfade, so there is never a hard loop cut.
+      const e = this._next();
       if (e) this._load(b, e); else this._pending = false;
     }
 

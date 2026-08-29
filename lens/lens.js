@@ -43,7 +43,7 @@ const state = {
   stack: DEFAULT_STACK.slice(),
   activePasses: DEFAULT_STACK.length,
   phase: 0,
-  crossfade: DEFAULT_CROSSFADE, crossfadePinned: false, playbackRate: 1,
+  crossfade: DEFAULT_CROSSFADE, crossfadePinned: false, playbackRate: 1, hold: 0,
   glOk: false, glLost: false,
   fps: 0, emaMs: 16, passes: 0,
   overBudgetSince: 0, underBudgetSince: 0,
@@ -225,6 +225,9 @@ async function loadConfig() {
     state.crossfade = c.crossfade_s;
     state.crossfadePinned = true;
   }
+  if (c && typeof c.hold_s === 'number' && c.hold_s >= 0) {
+    state.hold = Math.min(300, c.hold_s);
+  }
   if (c && typeof c.playback_rate === 'number' && c.playback_rate > 0) {
     state.playbackRate = Math.max(0.25, Math.min(2, c.playback_rate));
   }
@@ -261,6 +264,7 @@ async function applyConfig() {
     playlist.crossfade = state.crossfade;
     playlist.crossfadePinned = !!state.crossfadePinned;
     playlist.playbackRate = state.playbackRate;
+    playlist.hold = state.hold;
   }
   if (features) features.phase = state.phase;
   if (state.stack.join('>') !== before) {
@@ -298,6 +302,7 @@ async function bootstrapData() {
   playlist.crossfade = state.crossfade;
   playlist.crossfadePinned = !!state.crossfadePinned;
   playlist.playbackRate = state.playbackRate;
+  playlist.hold = state.hold;
 
   const got = await playlist.refresh();
   if (!got) {

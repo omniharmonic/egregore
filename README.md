@@ -152,6 +152,8 @@ the UI. All runtime files live outside the repository.
 | cadence floor | |
 | **local steps and local size** | |
 | **what gets rendered next (dwelt on / new / fresh / pause)** | |
+| **linger (least seconds a composition stays up)** | |
+| fill duration | |
 | freeze / mute | |
 
 Backend choice and the budget ceiling are in the restart column deliberately:
@@ -320,6 +322,20 @@ gaps, and the room sees less of what it actually said.
 Bear in mind that the lens stack reprocesses every frame, so a good deal of the
 extra resolution is spent on detail the shaders then paint over. Start fast,
 and raise the settings only if the picture underneath the effects looks thin.
+
+### Lingering on a composition
+
+Two things decide how long anything stays on screen:
+
+- **linger** (`zones[].hold_s`, per zone, live) — the least wall time a clip
+  holds the screen. A clip shorter than that dissolves into itself through
+  the normal crossfade, so the field breathes back into its own beginning
+  rather than cutting. Set it high to sit with a composition you like; 0 is
+  the clip's own length.
+- **fill duration** (`generation.fill_duration_s`, live) — how long a free
+  procedural fill runs. It is separate from `clip_duration_s`, which is sized
+  for what the paid backend can render in time; a fill costs nothing, so it
+  defaults to 12s.
 
 ### What gets rendered next
 

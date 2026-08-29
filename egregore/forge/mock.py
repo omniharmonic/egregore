@@ -54,7 +54,10 @@ FPS = 24
 _WORK_W = 512
 _WORK_H = 288
 
-_ALLOWED_DURATIONS = frozenset({2, 4, 6, 8})
+# Longer than any paid backend offers: a fill is free, and a composition
+# worth lingering on should not be cut short by a limit that exists for
+# render cost elsewhere.
+_ALLOWED_DURATIONS = frozenset({2, 4, 6, 8, 12, 16})
 _TIERS = frozenset({"mock"})
 
 #: Seconds of held still frame before the dissolve, and the dissolve itself.

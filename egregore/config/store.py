@@ -42,6 +42,7 @@ LIVE_KEYS: frozenset[str] = frozenset({
     "generation.clip_duration_s",
     "generation.resolution",
     "generation.local_steps",
+    "generation.fill_duration_s",
     "generation.local_resolution",
     "continuity.default_mode",
     "aesthetic.drift",

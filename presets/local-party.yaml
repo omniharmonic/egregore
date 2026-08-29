@@ -60,6 +60,7 @@ zones:
   - id: "main"
     mic: { type: "usb", device: null }   # null = system default input
     playback_rate: 0.7
+    hold_s: 20               # linger: a composition holds at least this long
     crossfade_s: 4.0
     lens_stack: ["flow", "smoke", "feedback", "bloom"]
     screens: ["screen-1"]
