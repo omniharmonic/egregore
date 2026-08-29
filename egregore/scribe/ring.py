@@ -34,13 +34,33 @@ import logging
 import time
 from collections import deque
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from egregore.config.schema import PrivacyConfig
 from egregore.types import TextFragment
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["RingBuffer"]
+__all__ = ["RingBuffer", "Segment"]
+
+
+@dataclass(frozen=True)
+class Segment:
+    """One stretch of speech between pauses. Text lives here and in the
+    weaver's stage 1 — nowhere else. ``repr`` is counts only."""
+
+    text: str
+    started_at: float
+    ended_at: float
+    tokens: int
+
+    def __repr__(self) -> str:  # pragma: no cover - trivial
+        return (
+            f"Segment(<{self.tokens} tokens redacted>, "
+            f"{self.started_at:.1f}..{self.ended_at:.1f})"
+        )
+
+    __str__ = __repr__
 
 
 def _utf8_len(text: str) -> int:
@@ -246,6 +266,33 @@ class RingBuffer:
         """
         self._evict()
         return " ".join(f.text for f in self._fragments)
+
+    def segments(self, gap_s: float) -> list[Segment]:
+        """The window split at pauses of at least ``gap_s`` seconds.
+
+        Same boundary as ``snapshot()``: evicts first, never clears, and the
+        text goes to weaver stage 1 and nowhere else. A pause is measured
+        between consecutive fragment timestamps, so a room that talks
+        without a break yields one segment and a back-and-forth yields
+        several — which is what lets the selector weigh them.
+        """
+        self._evict()
+        out: list[Segment] = []
+        parts: list[str] = []
+        start = end = 0.0
+        for frag in self._fragments:
+            if parts and frag.t - end >= gap_s:
+                text = " ".join(parts)
+                out.append(Segment(text, start, end, len(text.split())))
+                parts = []
+            if not parts:
+                start = frag.t
+            parts.append(frag.text)
+            end = frag.t
+        if parts:
+            text = " ".join(parts)
+            out.append(Segment(text, start, end, len(text.split())))
+        return out
 
     def occupancy(self) -> tuple[int, int]:
         """(fragment count, UTF-8 byte count) — safe to log."""

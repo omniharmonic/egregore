@@ -25,9 +25,10 @@ from egregore.scribe.excepthook import (
     privacy_asyncio_handler,
     scrub_value,
 )
-from egregore.scribe.ring import RingBuffer
+from egregore.scribe.ring import RingBuffer, Segment
 
 __all__ = [
+    "Segment",
     "RingBuffer",
     "FixtureTranscriber",
     "ParakeetTranscriber",

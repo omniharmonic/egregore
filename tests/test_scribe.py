@@ -506,3 +506,52 @@ def test_privacy_asyncio_handler_logs_without_content(caplog):
 def test_privacy_asyncio_handler_never_raises():
     privacy_asyncio_handler(None, {})
     privacy_asyncio_handler(None, {"exception": "not an exception"})
+
+
+# ---------------------------------------------------------------------------
+# Segments — the window split at pauses, for theme selection
+# ---------------------------------------------------------------------------
+
+from egregore.scribe import Segment  # noqa: E402
+
+
+def test_segments_split_where_the_room_paused():
+    ring, clock = make_ring()
+    ring.add("we drove out to the coast", t=1000.0)
+    ring.add("before sunrise", t=1002.0)
+    clock.advance(20)
+    ring.add("my grandmother kept shells", t=1020.0)
+    segs = ring.segments(gap_s=6.0)
+    assert len(segs) == 2
+    assert segs[0].text == "we drove out to the coast before sunrise"
+    assert segs[0].started_at == 1000.0 and segs[0].ended_at == 1002.0
+    assert segs[0].tokens == 8
+    assert segs[1].text == "my grandmother kept shells"
+
+
+def test_segments_do_not_split_under_the_gap():
+    ring, clock = make_ring()
+    ring.add("one", t=1000.0)
+    ring.add("two", t=1004.0)
+    clock.advance(4)
+    assert len(ring.segments(gap_s=6.0)) == 1
+
+
+def test_segments_of_an_empty_ring_is_empty():
+    ring, _ = make_ring()
+    assert ring.segments(gap_s=6.0) == []
+
+
+def test_segments_evict_first_like_snapshot():
+    ring, clock = make_ring(window_s=10.0)
+    ring.add("old", t=1000.0)
+    clock.advance(30)
+    ring.add("new", t=1030.0)
+    segs = ring.segments(gap_s=6.0)
+    assert [s.text for s in segs] == ["new"]
+
+
+def test_segment_repr_is_redacted():
+    s = Segment(text="a secret phrase", started_at=0.0, ended_at=1.0, tokens=3)
+    assert "secret" not in repr(s) and "secret" not in str(s)
+    assert "3" in repr(s)
