@@ -81,7 +81,11 @@ weaver:
   # Which of the things the room said becomes the next clip. Weighted blend;
   # the sliders on the dashboard change these live, per zone.
   selection:
-    salience: 0.5       # what the room dwelt on
+    # Measured on the first live run: with salience at 0.5 a long thought
+    # from 165s earlier beat a fresh one, and the clip landed 282s behind
+    # the room on a 116s render. Recency-forward keeps the screen with the
+    # conversation; salience still breaks ties toward what was dwelt on.
+    salience: 0.35      # what the room dwelt on
     novelty: 0.2        # lower than default: a continuity chain wants coherence
-    recency: 0.3        # what was said most recently
+    recency: 0.45       # what was said most recently
     segment_gap_s: 6.0  # a pause this long ends one thought and starts the next
