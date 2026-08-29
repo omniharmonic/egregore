@@ -205,6 +205,14 @@ class Forge:
         pending = queue.qsize() if queue is not None else 0
         return pending + self._inflight.get(zone, 0)
 
+    def in_flight(self, zone: str) -> int:
+        """Paid jobs currently being rendered for ``zone`` — 0 or 1.
+
+        The pull scheduler asks for a new clip only when this and the queue
+        are both empty, which is what bounds lag at one render.
+        """
+        return self._inflight.get(zone, 0)
+
     def fill_queue_depth(self, zone: str) -> int:
         queue = self._fill_queues.get(zone)
         return queue.qsize() if queue is not None else 0

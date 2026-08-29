@@ -1675,3 +1675,28 @@ def test_comfy_knobs_retune_without_rebuilding_the_backend(tmp_path):
     graph = backend._patched_workflow("a prompt", duration_s=4)
     assert _inputs_of(graph, "KSampler")["steps"] == 20
     assert _inputs_of(graph, "EmptyLTXVLatentVideo")["height"] == 512
+
+
+async def test_in_flight_counts_only_the_job_being_rendered(tmp_path):
+    store = ClipStore(tmp_path)
+    gate = asyncio.Event()
+
+    class Slow(MockBackend):
+        async def generate(self, *a, **kw):
+            await gate.wait()
+            return await super().generate(*a, **kw)
+
+    forge = Forge([Slow(store, name="slow")], store)
+    forge.start()
+    try:
+        assert forge.in_flight("z") == 0
+        await forge.request(zone="z", prompt="p", duration_s=2, tier="fast")
+        await forge.request(zone="z", prompt="p", duration_s=2, tier="fast")
+        await asyncio.sleep(0.05)
+        assert forge.in_flight("z") == 1, "one rendering, one waiting"
+        assert forge.queue_depth("z") == 2
+        gate.set()
+        await forge.join("z")
+        assert forge.in_flight("z") == 0
+    finally:
+        await forge.close()
