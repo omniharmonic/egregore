@@ -2,211 +2,168 @@
 
 **A collective dreaming engine for gathered spaces.**
 
-Egregore listens to the conversations happening across a physical space,
-distills them into abstract themes, and renders those themes as continuously
-evolving, symbolic video on screens throughout the room. Speech never leaves
-the building; only an abstracted, non-attributable prompt ever crosses the
-network boundary, and only in cloud mode.
+Egregore listens to the conversation in a room, distils it into themes, and
+renders those themes as slow, continuous, symbolic video on the walls. What
+people say never leaves the building; only an abstracted, non-attributable
+prompt is ever sent anywhere, and only if you choose a cloud renderer.
+
+It runs on one laptop. Phones on the same wifi can join as microphones or as
+screens. Everything about the look — how literal, how fast, how long each
+composition lingers, which effects — is a slider you can move while the party
+is running.
 
 ---
 
-## Quickstart
-
-No microphone, no GPU, and no API key required.
+## Five minutes, no hardware
 
 ```bash
+git clone https://github.com/omniharmonic/egregore && cd egregore
 uv sync --extra dev
-uv run egregore setup                    # probes the machine, stores any keys
 uv run egregore run presets/demo.yaml
 ```
 
-Then open:
+Open <http://localhost:8420/?zone=main>. That is the whole pipeline — a
+scripted conversation, theme extraction, the privacy gate, the generation
+queue, the growing loop, the WebGL effects — with a procedural renderer
+standing in for a video model. `ffmpeg` on your PATH is the only dependency.
 
-| | |
-|---|---|
-| **Screens** | <http://localhost:8420/?zone=main> |
-| **Status** | <http://localhost:8420/static/status.html> |
-| **Settings** | <http://localhost:8420/static/setup.html> |
+Then open <http://localhost:8420/static/setup.html> and move things.
 
-Demo mode is not a mock. It drives the whole real pipeline — ring buffer,
-theme abstraction, privacy validator, spend ledger, generation queue, growing
-loop, WebGL lens — from a scripted fixture conversation and a procedural
-ffmpeg renderer. `ffmpeg` on your PATH is the only hard dependency.
+## A real party
 
-## Run a party
+Pick one of five presets. Each is a commented guide to every knob in it.
+
+| preset | what it is | needs |
+|---|---|---|
+| `presets/local.yaml` | **The default.** Real mic, real transcription, real video, all on this machine. | ComfyUI + LTX-Video, Parakeet, a mic. LM Studio or Ollama strongly recommended. |
+| `presets/cloud.yaml` | Video from fal.ai. No GPU needed. | a fal key; a hard budget ceiling you set |
+| `presets/demo.yaml` | Nothing but the software. | ffmpeg |
+| `presets/two-rooms.yaml` | Phones as microphones, one screen per room. | as `local`, plus phones |
+| `presets/soak-*.yaml` | Test rigs that play a scripted conversation through a loopback device. | see `tools/soak.py` |
 
 ```bash
-uv run egregore run presets/two-rooms.yaml
+uv run egregore setup                 # probes the machine, stores keys, says what is missing
+uv run egregore run presets/local.yaml
 ```
 
-The banner prints the address. Anyone on the same wifi opens it on a phone and
-is asked one question — **what is this device?**
+The banner prints two addresses:
+
+- **screens:** `http://<this-machine>:8420/?zone=main` — open on any display
+- **join:** `http://<this-machine>:8420` — guests open it on a phone
+
+[docs/setup.md](docs/setup.md) walks the install for each piece of hardware.
+[AGENTS.md](AGENTS.md) is the same walk written for an AI assistant doing it
+with you.
+
+## Adding devices
+
+Anyone on the wifi opens the join address and is asked one question — **what
+is this device?**
 
 | choice | what it does |
 |---|---|
-| **listen** | its microphone joins a room, and what is said there shapes the dream |
+| **listen** | its microphone joins a room; what is said there shapes the dream |
 | **show** | it becomes a screen playing that room's loop |
 | **both** | it listens and shows at once |
 
-Many phones can listen in the same room; every one of them feeds that room's
-transcript, so a zone hears the conversation rather than one person. The
-operator watches `/static/setup.html`, where every device shows its room, its
-level, and buttons to mute or remove it. Enrolling needs no password — that
-moment is the point — so control is exercised afterwards instead.
+Many phones can listen in one room: every one feeds that room's transcript, so
+a zone hears a conversation rather than one person. A phone gates on the
+device — audio is sent only while someone is speaking — and what is sent is
+transcribed on the host and never stored.
+
+Screens are just browsers. A laptop, a TV's browser, a projector's Chromebox:
+open `?zone=<room>` on it. Give a screen a name (`&screen=projector`) to set
+its own effects and offset in the preset. The dashboard shows what every
+screen is playing and flags one that has stopped changing.
+
+Enrolling needs no password — that moment is the point — so control happens
+afterwards on the dashboard: mute, remove, restyle.
 
 ### How rooms relate
 
 `continuity.topology` decides whether a venue is several dreams or one:
 
-| mode | transcripts | video | cost |
-|---|---|---|---|
-| `independent` | per room | per room | N streams |
-| `commons` | one pool, party-wide | per room | N streams |
-| `mirror` | one pool, party-wide | one loop everywhere | **1 stream** |
+| topology | microphones | loops |
+|---|---|---|
+| `independent` | each room hears itself | each room its own |
+| `commons` | all rooms feed one conversation | each room its own look |
+| `mirror` | all rooms feed one conversation | one loop on every screen |
 
-`commons` is the "larger organism" setting: the kitchen and the dance floor
-both dream the whole party while still looking different. `mirror` puts the
-same loop on every wall, each screen at its own phase offset so the room is in
-step without being identical.
+## What the wall is doing, and the knobs that shape it
 
-## Three ways to run it
+Everything below is live — change it on the dashboard and the next clip uses
+it — unless marked *restart*. The full list with defaults is in
+[docs/PARAMETERS.md](docs/PARAMETERS.md).
 
-The backend ladder is ordered: the first rung that is healthy, affordable, and
-working wins, and the procedural renderer is always last, so the dream never
-starves regardless of GPUs, networks, or budgets.
+**Listening → themes.** Speech is transcribed on this machine into a ring
+buffer that forgets after `privacy.ring_buffer_minutes`. Each stretch of talk
+between pauses (`selection.segment_gap_s`) is abstracted into a *theme* — a
+few motifs, a palette, a register, a movement — by whichever brain is
+available: a local LLM (LM Studio or Ollama, auto-detected; the biggest single
+lever on whether the wall feels like the room) or a built-in matcher with a
+fixed vocabulary. A validator then rejects any theme that carries a phrase,
+a name, a number, or an address from the transcript. Only validated themes go
+further.
 
-| Backend | Needs | Speed | Cost | Try it |
-|---|---|---|---|---|
-| `procedural` | ffmpeg | instant | free | `presets/demo.yaml` |
-| `procedural` + live mic | ffmpeg, a microphone | instant | free | `presets/local.yaml` |
-| `local` | ComfyUI + a video model | ~1.5–5 min/clip | free | `presets/local.yaml` |
-| `fal` | `FAL_KEY` | ~1–2 min/clip | ~$0.025/s | `presets/cloud.yaml` |
-| `veo` | `GEMINI_API_KEY` | ~1 min/clip | $0.05–0.60/s | `presets/cloud.yaml` |
+**Themes → the next clip.** A clip is requested only when the previous one has
+finished rendering, never queued behind it, so the wall is exactly one render
+behind the room. Everything said during that render is scored by three
+sliders — **dwelt on** (what the room spent words on), **new** (distance from
+what was just shown), **fresh** (what was said last) — and the winner is
+written into a prompt built on your **grammar** (the look, editable on the
+dashboard) at your **abstraction**: 0 depicts the subject recognisably, 1
+renders it as pure abstraction, 0.5 is the sweet spot. **room bias** decides
+how much the sound of the room pushes the palette.
 
-Set `backend:` to your preference and `fallback:` to what should catch it.
+**Rendering.** `generation.backend` (*restart*) picks the renderer: `local`
+(ComfyUI + LTX-Video on this or another machine), `fal`, `veo`, or
+`procedural`. On local, **local quality** is the knob: `fast` (~80s a clip on
+a laptop), `balanced` (~2 min, the default), `high` (~4 min); a workstation
+shifts all three. The procedural renderer fills gaps for free and is never
+the material. `budget.total_usd` is a hard ceiling for cloud spend; at zero,
+no cloud call is even possible.
 
-## The cadence adapts to your hardware
+**The loop.** Clips join a weighted playlist; in `continuity` mode each one
+grows out of the last one's final frame. On each screen, **speed** slows the
+motion, **crossfade** is how long one clip dissolves into the next, and
+**linger** is the least time a composition stays up — a short clip dissolves
+into itself rather than cutting away.
 
-Egregore does not ask a machine for imagery faster than it can produce it.
-Each backend measures its own render time and the Governor paces generation to
-what it reports, so one preset behaves correctly on a laptop and on a
-datacentre GPU without being retuned:
-
-```
-wall=106.3s  latency_est=106.3s     # first real measurement replaces the seed
-wall=106.1s  latency_est=106.2s     # EWMA
-cadence interval_s: 60.0 -> 106.232 # the Governor followed it
-```
-
-If you want a fixed cadence instead, set **cadence floor** on the settings
-page (or `EGREGORE_MIN_CLIP_INTERVAL_S`).
+**The effects.** A stack of WebGL passes over the video, chosen per zone or
+per screen, each with tunable parameters, all audio-reactive. They are a
+fixed look you set, not something the conversation changes. If a screen
+cannot keep up it lowers its internal resolution, never the look.
 
 ## Is it actually listening?
 
-Two different questions, and the settings page answers both.
+The dashboard answers both questions. The **audio** panel draws the live
+numbers the effects are driven by; with a fixture microphone (the demo) it
+says so. The **monitor** panel — only when the party is started with
+`EGREGORE_MONITOR=1`, and only readable from the host — shows the live
+transcript, every candidate theme with its scores, and the prompt that won.
+The status line shows the measured **lag** from the last word of the winning
+thought to its clip landing.
 
-**Are the visuals audio-reactive?** Yes. Every effect shader reads the audio
-uniforms; freezing the video and changing only the audio numbers moves the
-render by a mean of 17 per pixel. The **audio** panel draws the live feature
-bus, so you can watch the numbers the shaders are actually being driven by.
+## Keys
 
-**Is it hearing *my* room?** Only if the zone's microphone is real. With
-`mic.type: fixture` — which is what every demo preset uses — the numbers are
-synthesised: a slow sine "music bed" with bursts around the scripted
-conversation. The panel says so in as many words. For a real room:
-
-```bash
-uv run egregore run presets/local.yaml
-```
-
-That preset is real microphone plus real on-device transcription plus the
-instant procedural renderer, so nothing is waiting on a GPU or a key.
-
-## Configuring it
-
-Start with the **settings page** at `/static/setup.html`. Everything except
-credentials can be changed there, and the **keys** panel handles those too
-when you open the page on the machine running the party.
-
-Configuration resolves in three layers:
-
-```
-presets/*.yaml            what you start from, checked into the repo
-~/.egregore/settings.yaml overrides written by the settings page
-~/.egregore/env           API keys, mode 0600, written by `egregore setup`
-```
-
-A preset stays a valid standalone config, so nothing breaks if you never open
-the UI. All runtime files live outside the repository.
-
-**What applies immediately, and what waits for a restart:**
-
-| Live — next clip | Restart — next run |
-|---|---|
-| **video effects (lens stack)** | backend and fallback |
-| **audio routing per zone** | model selection |
-| clip duration | API keys |
-| resolution | budget ceiling |
-| drift | microphone and zones |
-| continuity mode | ComfyUI URL |
-| cadence floor | |
-| **local steps and local size** | |
-| **what gets rendered next (dwelt on / new / fresh / pause)** | |
-| **linger (least seconds a composition stays up)** | |
-| fill duration | |
-| freeze / mute | |
-
-Backend choice and the budget ceiling are in the restart column deliberately:
-rebuilding the ladder with clips in flight, or moving a ceiling that
-reservations are already held against, both have real failure modes.
-
-### Video effects
-
-Ten lenses ship: `feedback`, `kaleidoscope`, `flow`, `chroma`, `bloom`,
-`liquid`, `glitch`, `pixelsort`, `crt`, `corrupt`. Tick them on the settings
-page and the screens change immediately — no reload, no restart. Order follows
-the order they are listed in.
-
-To tune one screen by hand without touching the room, append `?stack=` to its
-URL; that screen then ignores operator changes until it is reloaded:
-
-```
-http://localhost:8420/?zone=main&stack=kaleidoscope,chroma,bloom
-http://localhost:8420/?zone=main&stack=            # no effects at all
-```
-
-Each zone also chooses what its effects listen to: the room's microphone via
-the server feature bus (`zone`, the default), or that screen's own microphone
-captured in the browser (`local_mic`).
-
-### Keys
-
-Set them on the settings page — the **keys** panel has an input for each one.
-It only accepts writes from the machine running Egregore: the party password
-is enough to restyle a room, and deliberately not enough to set a credential.
-No route ever returns a key's value, and the input clears on save.
-
-If you would rather stay in the terminal:
+Set them on the dashboard's **keys** panel — it only accepts writes from the
+host machine, no route ever returns a value, and the field clears on save —
+or in the terminal:
 
 ```bash
 uv run egregore setup          # writes ~/.egregore/env at mode 0600
 ```
 
-Either way keys land in the same place and take effect on the next restart.
+The dashboard binds to the LAN by default so any screen can watch.
+Configuration is a higher trust level: settings routes require the party
+password even when party auth is off, and with no password at all they
+answer only on loopback. Set `EGREGORE_PARTY_PASSWORD` before exposing a
+party beyond a trusted network.
 
-The dashboard binds to `0.0.0.0` by default, so anyone on the venue network
-can watch the screens. Configuration is a different trust level: the settings
-endpoints require the party password even when party auth is off, and where no
-password is set at all they answer only on loopback.
+## Adding a cloud model
 
-Set a password with `EGREGORE_PARTY_PASSWORD` before exposing a party beyond a
-trusted LAN.
-
-## Adding a model
-
-fal fronts a large catalogue behind one queue protocol, so adding a model is
-data rather than code. Use the **models** panel on the settings page, or write
-`~/.egregore/models.yaml` directly:
+fal fronts a large catalogue behind one protocol, so a model is data, not
+code. Use the **models** panel or write `~/.egregore/models.yaml`:
 
 ```yaml
 kling-2-5:
@@ -218,186 +175,93 @@ kling-2-5:
   extra_input: { cfg_scale: 0.5 }
 ```
 
-`extra_input` carries per-model quirks — MiniMax's required
-`prompt_expansion_mode` lives there rather than in the shared request builder.
-
 > **The price is not decoration.** It is what the spend ceiling is computed
-> from, so a wrong figure lets a party overspend. Record the **standard**
-> rate, never a promotional one: a reservation is made before a generation
-> that may land after the promo expires. The settings page shows the resulting
-> per-clip reservation as you type, which is how a misplaced decimal becomes
-> visible instead of silent.
-
-Entries with a missing or non-positive price are dropped rather than
-defaulted. Built-in models can be overridden by key but not deleted, so
-upstream price corrections keep reaching you.
+> from. Record the **standard** rate, never a promotional one. The panel
+> shows the per-clip reservation as you type.
 
 ## Privacy
 
-This is the part of the system with the least room for interpretation.
+- Transcript text exists only in the zone's ring buffer and transiently in
+  theme extraction. It is never logged, written to disk, or put in an error.
+- Only a validated, abstracted prompt may reach a renderer, and a cloud one
+  only when a budget is set.
+- The feature bus that drives the effects carries numbers only.
+- A phone microphone sends audio only while someone is speaking, over the
+  local network, to be transcribed on the host and dropped. Say so on the
+  signage ([docs/signage.md](docs/signage.md)).
 
-- Transcript text exists only inside the zone's ring buffer and transiently in
-  the weaver's first stage. It is never logged, never written to disk, and
-  never placed in an exception message.
-- Only a validated, abstracted prompt may reach a backend, and only when a
-  budget is set. A zero-budget preset cannot reach any cloud, whatever is in
-  your environment.
-- The feature bus that drives the shaders carries numbers only.
-- A phone acting as a microphone gates on the device: audio is sent only while
-  someone is speaking, so silence never leaves the handset. What is said
-  travels over the local network to the machine running Egregore, is
-  transcribed there, and is never stored or sent out of the building. This is
-  a real change from a single-machine party, where audio never left the
-  capturing machine at all — say so on the signage.
+*"put that down, smell this, it's basically the ocean… my grandmother kept
+shells like that by the door"* becomes, with the LLM weaver:
 
-What that looks like on real speech — *"put that down, smell this, it's
-basically the ocean… my grandmother used to keep shells like that in a bowl by
-the door"* becomes:
+> luminous pools; receding water; inherited domestic traces; quiet mineral
+> memory — water, stone, light, salt
 
-> Render these themes as pure abstract imagery, never as literal objects:
-> vast blue depth; surface breaking into light; slow tidal pull.
-> Elemental palette and material: water, deep blue, pressure, pale gold
-
-Zero shared three-word sequences with the source, and no proper nouns.
+Zero shared three-word sequences with the source, no names.
 `tests/test_privacy.py` is the test that must never fail.
 
 ## Costs
 
-Prices are per generated second, and video is billed whether or not you use
-the audio track.
-
 | Model | Rate | 5s clip | ~3h party (120 clips) |
 |---|---|---|---|
-| MiniMax H3 Max (480P, promo) | $0.025/s | $0.13 | ~$15 |
-| MiniMax H3 Max (480P, standard) | $0.05/s | $0.25 | ~$30 |
+| Local (LTX-Video on your GPU) | $0 | $0 | $0 |
+| MiniMax H3 Max, 480P | $0.05/s | $0.25 | ~$30 |
+| MiniMax H3 Max, 768P | $0.08/s | $0.40 | ~$48 |
 | Veo 3.1 Fast (720p) | $0.10/s | $0.50 | ~$60 |
-| Veo 3.1 (720p/1080p) | $0.40/s | $2.00 | ~$240 |
 
-`budget.total_usd` is a hard ceiling the Governor cannot exceed, not a target.
-Reservations are held against the standard rate with a 2× safety factor, so a
-promo ending mid-party cannot breach it.
-
-On Veo specifically, quota binds long before budget does — Tier 1 is reported
-at around 10 video requests per day, and failed generations still consume it.
-See [docs/veo-setup.md](docs/veo-setup.md).
+`budget.total_usd` is a ceiling the Governor cannot exceed. Reservations are
+held at the standard rate with a safety factor, so a promo ending mid-party
+cannot breach it.
 
 ## Troubleshooting
 
-**The visuals move but nothing is listening.** Check the **audio** panel. If
-it says *Source: fixture*, the numbers are synthetic and no microphone is
-open — that is every demo preset. Use `presets/local.yaml` for a real room.
+**Nothing looks like the conversation.** Is a local LLM running? The status
+page shows the *weaver engine*; `heuristic` means no LLM was found. Start LM
+Studio or Ollama with a small chat model (4–8B is plenty; it is auto-detected
+on restart) and lower **abstraction** toward 0.3.
+
+**The wall shows the same clip for minutes.** The dashboard flags it. Reload
+the screen; the deck now repicks on its own if a clip overstays.
+
+**Clips arrive too slowly.** Drop **local quality** to `fast`, or shorten
+`clip_duration_s`. The status line's `waited` count says the GPU is the
+bottleneck; `held` says the room was silent.
+
+**Everything is dark.** Lower **room bias** to 0.5 or 0, raise local quality,
+and try a lighter effect stack (`feedback` smears; `bloom` and `flow` are
+gentler).
 
 **The microphone produces `PortAudio -9986`.** macOS is refusing microphone
-access to your terminal, and reports it as a device fault. Grant it in System
-Settings → Privacy & Security → Microphone.
+access to your terminal. System Settings → Privacy & Security → Microphone.
 
-**`webrtcvad` fails to import with `No module named 'pkg_resources'`.** Install
-`webrtcvad-wheels` instead; modern setuptools no longer ships `pkg_resources`.
+**A stale `~/.egregore/settings.yaml` overrides the preset.** The banner
+lists every overridden value; `--ignore-settings` bypasses the file.
 
-**Parakeet fails with a dimension mismatch at 80 vs 128.** The ONNX directory
-is missing its `config.json` declaring `features_size: 128`.
+More in [docs/local-hardware.md](docs/local-hardware.md) (ComfyUI, LTX
+weights, Parakeet) and [docs/fal-setup.md](docs/fal-setup.md).
 
-### Tuning local generation to your hardware
+## Testing it end to end
 
-`local_steps` and `local_resolution` decide how hard your GPU works per clip.
-They live in config, not in the workflow file, so the same graph runs on a
-laptop and on a workstation at settings appropriate to each — and both can be
-retuned from the dashboard while the party is running, which matters because a
-restart drops the clip pool and the continuity chain with it.
-
-```yaml
-generation:
-  backend: "local"
-  local_steps: 8            # blank leaves your workflow file's own value alone
-  local_resolution: "512x320"   # multiples of 32
+```bash
+uv run pytest -q                                   # ~470 tests, a minute
+uv run egregore run presets/soak-local.yaml &      # then, on macOS with BlackHole:
+python3 tools/soak.py --log <the party log> --out docs/reports
 ```
 
-The trade is responsiveness against fidelity. On an Apple-silicon laptop, 8
-steps at 512×320 renders a 4-second clip in about two minutes; 12 steps at
-640×384 takes four or five. That difference is not academic — it is whether
-the imagery on screen still belongs to the conversation that shaped it, or to
-the one before it. If clips arrive too slowly the procedural renderer fills the
-gaps, and the room sees less of what it actually said.
-
-Bear in mind that the lens stack reprocesses every frame, so a good deal of the
-extra resolution is spent on detail the shaders then paint over. Start fast,
-and raise the settings only if the picture underneath the effects looks thin.
-
-### When a screen cannot keep up
-
-If a frame runs long, the screen lowers its internal render resolution in
-steps — a touch softer, same shaders — and raises it again when there is
-headroom. The look you chose stays the look. `?adapt=passes` on a screen's
-address restores the old behaviour of dropping effect passes instead, and
-`?adapt=off` never adapts.
-
-### Lingering on a composition
-
-Two things decide how long anything stays on screen:
-
-- **linger** (`zones[].hold_s`, per zone, live) — the least wall time a clip
-  holds the screen. A clip shorter than that dissolves into itself through
-  the normal crossfade, so the field breathes back into its own beginning
-  rather than cutting. Set it high to sit with a composition you like; 0 is
-  the clip's own length.
-- **fill duration** (`generation.fill_duration_s`, live) — how long a free
-  procedural fill runs. It is separate from `clip_duration_s`, which is sized
-  for what the paid backend can render in time; a fill costs nothing, so it
-  defaults to 12s.
-
-### What gets rendered next
-
-A clip is asked for only when the previous one has finished — never queued
-behind it. So the prompt is always written from what the room said *during*
-the last render, and imagery is one render behind the conversation, not a
-compounding backlog of it.
-
-When the render finishes, everything said meanwhile is split at pauses into
-separate thoughts, each is abstracted and validated on its own, and one is
-chosen by a blend of three signals you can set per zone, live:
-
-| slider | what it favours |
-|---|---|
-| dwelt on | the thought the room spent the most words on |
-| new | the thought furthest from what was just shown |
-| fresh | the thought said most recently |
-
-The monitor panel shows every candidate with its scores and marks the winner,
-and the status line shows the measured lag from the last word of the winning
-thought to the clip landing. In continuity mode a high "new" weight pulls
-against the chain's coherence; the `local-party` preset sets it low.
-
-**ComfyUI rejects the LTX-Video VAE with `KeyError: post_quant_conv.weight`.**
-The diffusers VAE published under `vae/` uses `resnets` where ComfyUI expects
-`res_blocks`, and omits `per_channel_statistics`. Extract the VAE from the
-single-file checkpoint instead — see
-[docs/local-hardware.md](docs/local-hardware.md).
-
-**LM Studio will not run a video model.** It has no video endpoint at all, and
-returns HTTP 200 with an error body for any unknown route, which makes this
-look like a different problem than it is. Video models need ComfyUI.
-
-**ComfyUI is missing the GGUF or video nodes.** Install
-[ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) and
-[ComfyUI-VideoHelperSuite](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite).
+The soak plays a six-scene scripted conversation into a loopback device,
+changes grammar, abstraction, selection and quality live at scene boundaries,
+and writes a report with real numbers: lag per clip, candidates per
+selection, how long each change took to show, what each screen played.
+Two are in [docs/reports](docs/reports).
 
 ## Development
 
 ```bash
-uv run pytest -q          # the suite, offline: no GPU, no network, no audio device
+uv sync --extra dev
 uv run ruff check .
+uv run pytest -q
 ```
 
-[CONTRACTS.md](CONTRACTS.md) describes the module boundaries and the
-invariants that hold across them — read it before changing anything that
-crosses a module.
-
-## Documentation
-
-- [Local hardware](docs/local-hardware.md) — ComfyUI, LTX-Video, Parakeet, mics
-- [fal.ai setup](docs/fal-setup.md) — keys, catalogue, costs
-- [Veo setup](docs/veo-setup.md) — keys, quota, pricing corrections
-- [PRD](docs/egregore-01-prd.md) · [Architecture](docs/egregore-02-architecture.md) ·
-  [Implementation plan](docs/egregore-03-implementation-plan.md)
-- [Run of show](docs/run-of-show.md) · [Signage](docs/signage.md) ·
-  [Setup](docs/setup.md)
+`egregore/app.py` is the only place modules meet; every module imports only
+`egregore.types`, `egregore.config.schema`, and the standard library.
+`CONTRACTS.md` describes the boundaries. Design notes and plans live in
+`docs/superpowers/`.
