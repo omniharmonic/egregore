@@ -267,8 +267,15 @@
       var flags = [];
       if (muted) flags.push('MUTED');
       if (z.has_last_frame === false) flags.push('no seed');
+      // Pull scheduling: one render in flight is the whole story. The lag
+      // is the last word of the winning thought to the clip landing — the
+      // number that says the screen belongs to this conversation.
+      var sel = z.last_selection || null;
+      if (sel && sel.lag_s != null) flags.push('lag ' + Math.round(sel.lag_s) + 's');
+      if (sel && sel.candidates > 1) flags.push(sel.candidates + ' cands');
+      if (z.waited_for_slot) flags.push('waited ' + z.waited_for_slot);
       var cls = '';
-      if (q >= 4) { cls = 'bad'; flags.push('BACKLOG'); }
+      if (q >= 2) { cls = 'bad'; flags.push('BACKLOG'); }
       else if (muted) cls = 'warn';
       else if (q > 0) cls = 'v';
 

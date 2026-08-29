@@ -151,6 +151,7 @@ the UI. All runtime files live outside the repository.
 | continuity mode | ComfyUI URL |
 | cadence floor | |
 | **local steps and local size** | |
+| **what gets rendered next (dwelt on / new / fresh / pause)** | |
 | freeze / mute | |
 
 Backend choice and the budget ceiling are in the restart column deliberately:
@@ -319,6 +320,28 @@ gaps, and the room sees less of what it actually said.
 Bear in mind that the lens stack reprocesses every frame, so a good deal of the
 extra resolution is spent on detail the shaders then paint over. Start fast,
 and raise the settings only if the picture underneath the effects looks thin.
+
+### What gets rendered next
+
+A clip is asked for only when the previous one has finished — never queued
+behind it. So the prompt is always written from what the room said *during*
+the last render, and imagery is one render behind the conversation, not a
+compounding backlog of it.
+
+When the render finishes, everything said meanwhile is split at pauses into
+separate thoughts, each is abstracted and validated on its own, and one is
+chosen by a blend of three signals you can set per zone, live:
+
+| slider | what it favours |
+|---|---|
+| dwelt on | the thought the room spent the most words on |
+| new | the thought furthest from what was just shown |
+| fresh | the thought said most recently |
+
+The monitor panel shows every candidate with its scores and marks the winner,
+and the status line shows the measured lag from the last word of the winning
+thought to the clip landing. In continuity mode a high "new" weight pulls
+against the chain's coherence; the `local-party` preset sets it low.
 
 **ComfyUI rejects the LTX-Video VAE with `KeyError: post_quant_conv.weight`.**
 The diffusers VAE published under `vae/` uses `resnets` where ComfyUI expects

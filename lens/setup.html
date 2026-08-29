@@ -752,6 +752,30 @@
             ? themes[0] + (pal ? '\n' + pal[0] : '')
             : '(no prompt yet)';
           el.monitor.appendChild(p);
+
+          if (z.candidates && z.candidates.length) {
+            var ch = document.createElement('div');
+            ch.className = 'row';
+            var cl = document.createElement('span');
+            cl.className = 'off';
+            cl.textContent = 'listened ' + Math.round(z.listened_s || 0) + 's · '
+              + z.candidates.length + ' candidate(s) · ▶ marks what was rendered';
+            ch.appendChild(cl);
+            el.monitor.appendChild(ch);
+            z.candidates.forEach(function (c) {
+              var row = document.createElement('div');
+              row.className = 'transcript' + (c.winner ? ' prompt-themes' : '');
+              var bars = ['salience', 'novelty', 'recency'].map(function (k) {
+                var n = Math.round((c[k] || 0) * 8);
+                return k.slice(0, 3) + ' ' + '█'.repeat(n) + '░'.repeat(8 - n);
+              }).join('  ');
+              row.textContent = (c.winner ? '▶ ' : '  ')
+                + (c.motifs || []).join('; ')
+                + (c.elemental && c.elemental.length ? ' — ' + c.elemental.join(', ') : '')
+                + '\n   ' + bars + '   ' + (c.score || 0).toFixed(2);
+              el.monitor.appendChild(row);
+            });
+          }
         });
       })
       .catch(function () { /* keep the last view */ });
@@ -928,6 +952,51 @@
         });
         r.addEventListener('change', function () {
           var body = {}; body[key] = +r.value;
+          fetch('/api/zones/' + encodeURIComponent(zone), {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+        });
+        row.appendChild(lab); row.appendChild(r); row.appendChild(num);
+        row.appendChild(tag); row.appendChild(note);
+        box.appendChild(row);
+      });
+
+      // --- what gets rendered next, applied live ---
+      //
+      // When a render finishes the room has usually said several things.
+      // These decide which one becomes the next clip.
+      var sel = z.selection || {};
+      [['salience', 'dwelt on', 0, 1, 0.05, sel.salience,
+        'what the room spent the most words on'],
+       ['novelty', 'new', 0, 1, 0.05, sel.novelty,
+        'furthest from what was just shown'],
+       ['recency', 'fresh', 0, 1, 0.05, sel.recency,
+        'what was said most recently'],
+       ['segment_gap_s', 'pause', 1, 30, 1, sel.segment_gap_s,
+        'seconds of silence that end one thought and start the next']
+      ].forEach(function (spec) {
+        var key = spec[0], name = spec[1];
+        var fallback = key === 'segment_gap_s' ? 6 :
+          ({salience: 0.5, novelty: 0.3, recency: 0.2})[key];
+        var row = document.createElement('div');
+        row.className = 'row';
+        var lab = document.createElement('label');
+        lab.className = 'key'; lab.textContent = name;
+        var r = document.createElement('input');
+        r.type = 'range'; r.min = spec[2]; r.max = spec[3]; r.step = spec[4];
+        r.value = (spec[5] == null ? fallback : spec[5]); r.style.minWidth = '220px';
+        var num = document.createElement('span');
+        num.className = 'val'; num.style.minWidth = '6ch';
+        num.textContent = (+r.value).toFixed(2);
+        var tag = document.createElement('span');
+        tag.className = 'tag live'; tag.textContent = 'live';
+        var note = document.createElement('span');
+        note.className = 'off'; note.textContent = spec[6];
+        r.addEventListener('input', function () { num.textContent = (+r.value).toFixed(2); });
+        r.addEventListener('change', function () {
+          var body = { selection: {} }; body.selection[key] = +r.value;
           fetch('/api/zones/' + encodeURIComponent(zone), {
             method: 'POST', credentials: 'same-origin',
             headers: { 'content-type': 'application/json' },

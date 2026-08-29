@@ -76,3 +76,12 @@ serving:
   bind: "0.0.0.0:8420"
 
 clip_store_dir: "var/clips-local-party"
+
+weaver:
+  # Which of the things the room said becomes the next clip. Weighted blend;
+  # the sliders on the dashboard change these live, per zone.
+  selection:
+    salience: 0.5       # what the room dwelt on
+    novelty: 0.2        # lower than default: a continuity chain wants coherence
+    recency: 0.3        # what was said most recently
+    segment_gap_s: 6.0  # a pause this long ends one thought and starts the next
