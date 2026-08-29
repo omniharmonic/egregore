@@ -553,7 +553,15 @@ def create_app(
                 "audio_source": client.get("audio_source", "zone"),
                 "crossfade_s": client.get("crossfade_s", 2.0),
                 "playback_rate": client.get("playback_rate", 1.0),
-                "selection": state.zone_config[zone].get("selection", {}),
+                # What is actually in effect: party default from the preset,
+                # then the zone's preset override, then anything changed live.
+                # Returning only the live override made the sliders show the
+                # schema's defaults rather than the party's.
+                "selection": {
+                    **((effective.get("weaver") or {}).get("selection") or {}),
+                    **(source.get("selection") or {}),
+                    **(state.zone_config[zone].get("selection") or {}),
+                },
                 "config_revision": state.config_revision(zone),
                 "screens": sorted(state.zone_config[zone].get("screens", {})),
                 "mic": source.get("mic", {}),

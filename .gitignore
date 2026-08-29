@@ -9,3 +9,4 @@ uv.lock
 .DS_Store
 .env
 .env.*
+.playwright-mcp/
