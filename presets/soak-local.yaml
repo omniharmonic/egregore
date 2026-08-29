@@ -1,0 +1,53 @@
+# Soak test: a scripted conversation played into a loopback audio device
+# (BlackHole) so the real ASR path is exercised without a sound in the room.
+# Everything else is the Local Party preset. Run with tools/soak.py.
+party:
+  name: "Soak Local"
+  duration_hours: 3
+
+generation:
+  backend: "local"
+  clip_duration_s: 4
+  fallback: "procedural"
+  fill_duration_s: 12
+  local_steps: 8
+  local_resolution: "512x320"
+
+budget:
+  total_usd: 0
+
+continuity:
+  default_mode: "continuity"
+  max_chain_length: 8
+
+aesthetic:
+  abstraction: 0.85
+
+weaver:
+  fallback_after_s: 120
+  selection:
+    salience: 0.35
+    novelty: 0.2
+    recency: 0.45
+    segment_gap_s: 6.0
+
+asr:
+  engine: "parakeet"
+
+zones:
+  - id: "main"
+    mic: { type: "usb", device: "BlackHole 2ch" }
+    playback_rate: 0.7
+    hold_s: 20
+    crossfade_s: 4.0
+    lens_stack: ["flow", "smoke", "feedback", "bloom"]
+    screens: ["screen-1"]
+
+screens:
+  - id: "screen-1"
+    zone: "main"
+
+privacy:
+  signage_required: false
+
+clip_store_dir: "var/clips-soak"

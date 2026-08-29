@@ -788,3 +788,21 @@ def test_zone_hold_reaches_the_screen_config(cfg_home):
         assert client.get("/api/config?zone=main").json()["hold_s"] == 25.0
         assert client.get("/api/zones").json()["zones"]["main"]["hold_s"] == 25.0
         assert client.post("/api/zones/main", json={"hold_s": -1}).status_code == 400
+
+
+def test_a_screen_reports_what_it_is_playing(tmp_path):
+    # The server cannot otherwise know which clip a screen chose: the
+    # playlist is weighted and the client picks. The beacon is what lets an
+    # operator (and a soak test) see that generated video is on screen.
+    state, _ = make_state(tmp_path)
+    app = make_app(tmp_path, state)
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/manifest?zone=main") as ws:
+            ws.send_json({"type": "playing", "screen": "screen-1", "clip_id": "abc123"})
+            import time as _t
+            deadline = _t.monotonic() + 2
+            while _t.monotonic() < deadline and not state.now_playing.get("main"):
+                _t.sleep(0.05)
+        assert state.now_playing["main"]["screen-1"]["clip_id"] == "abc123"
+        body = client.get("/api/status").json()
+        assert body["now_playing"]["main"]["screen-1"]["clip_id"] == "abc123"

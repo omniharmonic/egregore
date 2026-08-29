@@ -25,6 +25,7 @@ JSON messages -- and stays flat in cost as screens are added.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 
@@ -144,6 +145,24 @@ def _manifest_wire(manifest: Manifest) -> dict:
             for e in manifest.entries
         ],
     }
+
+
+async def _manifest_reader(websocket: WebSocket, state: ConductorState, zone: str) -> None:
+    """Like ``_reader``, but a screen may report what it is playing."""
+    import time as _time
+
+    while True:
+        raw = await websocket.receive_text()
+        try:
+            msg = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(msg, dict) and msg.get("type") == "playing":
+            screen = str(msg.get("screen") or "")[:64] or "-"
+            clip_id = str(msg.get("clip_id") or "")[:64]
+            state.now_playing.setdefault(zone, {})[screen] = {
+                "clip_id": clip_id, "at": _time.time(),
+            }
 
 
 async def _reader(websocket: WebSocket) -> None:
@@ -269,7 +288,14 @@ def create_app(
             current = state.get_manifest(zone)
             if current is not None:
                 await websocket.send_json({"type": "manifest", "revision": current.revision})
-            await _serve_ws(websocket, queue)
+            reader = asyncio.create_task(_manifest_reader(websocket, state, zone))
+            writer = asyncio.create_task(_writer(websocket, queue))
+            try:
+                await asyncio.wait({reader, writer}, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                reader.cancel()
+                writer.cancel()
+                await asyncio.gather(reader, writer, return_exceptions=True)
         finally:
             state.unsubscribe_manifest(zone, queue)
 
@@ -318,6 +344,7 @@ def create_app(
             **base,
             "screens_connected": state.screens_connected,
             "screens_connected_by_zone": state.screens_connected_by_zone(),
+            "now_playing": state.now_playing,
         }
 
     @app.post("/api/control/{action}", dependencies=[Depends(require_party)])

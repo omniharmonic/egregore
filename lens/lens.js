@@ -346,6 +346,17 @@ function connectManifestWs() {
   } catch { return scheduleManifestRetry(); }
   state.manifestWs = ws;
   ws.onopen = () => { state.manifestRetry = 0; state.manifestState = 'live'; };
+  // Say what is on this wall. The playlist is weighted and this client
+  // chooses, so the server cannot otherwise know — and an operator asking
+  // "is that generated video or a fill?" deserves an answer.
+  const beacon = setInterval(() => {
+    if (ws.readyState !== 1 || !deck) return;
+    const cid = deck.clipId[deck.active];
+    if (!cid) return;
+    try { ws.send(JSON.stringify({ type: 'playing', screen: SCREEN || '-', clip_id: cid })); }
+    catch { /* socket closing */ }
+  }, 5000);
+  ws.addEventListener('close', () => clearInterval(beacon));
   ws.onmessage = (ev) => {
     let m; try { m = JSON.parse(ev.data); } catch { return; }
     if (m && m.type === 'manifest' && playlist && m.revision !== playlist.revision) {
