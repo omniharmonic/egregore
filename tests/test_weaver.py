@@ -982,3 +982,15 @@ def test_build_abstractor_prefers_the_configured_model_when_listed(monkeypatch):
     cfg = WeaverConfig.model_validate({"llm": {"model": "small-one"}})
     a = build_abstractor(cfg, probe=lambda url: ["big-one", "small-one"] if "1234" in url else None)
     assert a.model == "small-one"
+
+
+def test_autodetect_prefers_the_smallest_chat_model(monkeypatch):
+    # Stage 1 turns three sentences into five motifs. A 4B model does that in
+    # seconds; a 27B takes a minute and shares the GPU with the renderer.
+    monkeypatch.setenv("EGREGORE_LLM_AUTODETECT", "1")
+    from egregore.config.schema import WeaverConfig
+    from egregore.weaver.abstractor import build_abstractor
+
+    listed = ["qwen/qwen3.8-27b", "text-embedding-nomic", "google/gemma-3-4b", "llama-3.1-8b-instruct"]
+    a = build_abstractor(WeaverConfig(), probe=lambda url: listed if "1234" in url else None)
+    assert a.model == "google/gemma-3-4b"

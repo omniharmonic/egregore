@@ -361,6 +361,10 @@
     { path: 'generation.fallback',     label: 'fallback',   type: 'select',
       options: ['procedural', 'local', 'fal', 'mock', 'none'] },
     { path: 'generation.comfyui_url',  label: 'comfyui url', type: 'text' },
+    { path: 'weaver.llm.model',        label: 'theme model', type: 'text',
+      note: 'the local LLM that turns talk into themes. blank = the smallest chat '
+          + 'model LM Studio or Ollama offers. without any LLM a fixed-vocabulary '
+          + 'matcher runs, and the wall feels far less like the room' },
     { path: 'generation.resolution',   label: 'resolution', type: 'text',
       note: 'what the cloud backends are billed at' },
     { path: 'generation.local_steps',  label: 'local steps', type: 'number',

@@ -867,6 +867,10 @@ class ZonePipeline:
             "purges": self.weaver.purges_requested,
             "bleeds": self.bleeds,
             "in_flight": self.forge.in_flight(self.zone),
+            # Which brain writes the themes. The heuristic has a fixed
+            # vocabulary; an LLM is what makes the wall feel like the room.
+            "weaver_engine": getattr(self.weaver.abstractor, "name", "heuristic"),
+            "weaver_model": getattr(self.weaver.abstractor, "model", None),
             "lag_s": self.last_lag_s,
             "waited_for_slot": self.waited_for_slot,
             "held_for_speech": self.held_for_speech,

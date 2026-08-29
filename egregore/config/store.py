@@ -72,6 +72,9 @@ RESTART_KEYS: frozenset[str] = frozenset({
     "continuity.topology",
     "asr.engine",
     "serving.bind",
+    "weaver.llm.model",
+    "weaver.llm.base_url",
+    "weaver.engine",
 })
 
 

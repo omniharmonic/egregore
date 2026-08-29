@@ -778,13 +778,27 @@ def probe_llm_server(base_url: str, timeout: float = 1.5) -> list[str] | None:
         return None
 
 
+_SIZE = re.compile(r"(\d+(?:\.\d+)?)\s*b(?![a-z])", re.IGNORECASE)
+
+
+def _param_count(model_id: str) -> float:
+    """Billions of parameters as written in the id ('gemma-3-4b' -> 4), or
+    a large number when the id does not say — unknown sizes go last."""
+    hits = [float(m.group(1)) for m in _SIZE.finditer(model_id)]
+    return min(hits) if hits else 1e9
+
+
 def _pick_chat_model(models: list[str], preferred: str | None) -> str | None:
+    """The configured model if the server has it; otherwise the *smallest*
+    chat model it lists. Stage 1 turns a few sentences into five motifs — a
+    4B model does that in seconds, a 27B takes a minute and shares the GPU
+    with the video renderer."""
     if preferred and preferred in models:
         return preferred
-    for m in models:
-        if not any(tag in m.lower() for tag in _NOT_CHAT):
-            return m
-    return None
+    chat = [m for m in models if not any(tag in m.lower() for tag in _NOT_CHAT)]
+    if not chat:
+        return None
+    return min(chat, key=lambda m: (_param_count(m), chat.index(m)))
 
 
 def build_abstractor(
