@@ -449,6 +449,7 @@ class ZonePipeline:
         )
         self.weaver = Weaver(
             build_abstractor(cfg.weaver), stage1_budget_s=cfg.weaver.stage1_budget_s,
+            max_slow_calls=cfg.weaver.max_slow_calls,
         )
         self.mood = MoodIntegrator()
         self.loom = ZoneLoom.from_config(
@@ -889,7 +890,7 @@ class ZonePipeline:
             "in_flight": self.forge.in_flight(self.zone),
             # Which brain writes the themes. The heuristic has a fixed
             # vocabulary; an LLM is what makes the wall feel like the room.
-            "weaver_engine": getattr(self.weaver.abstractor, "name", "heuristic"),
+            "weaver_engine": self.weaver.engine_name,
             "weaver_model": getattr(self.weaver.abstractor, "model", None),
             "lag_s": self.last_lag_s,
             "waited_for_slot": self.waited_for_slot,

@@ -71,6 +71,7 @@ class Weaver:
         max_attempts: int = 2,
         stage1_budget_s: float = 10.0,
         cache_size: int = 64,
+        max_slow_calls: int = 3,
     ) -> None:
         self.abstractor: Abstractor = abstractor or HeuristicAbstractor()
         self.min_window_tokens = min_window_tokens
@@ -90,6 +91,14 @@ class Weaver:
         self._pending: set[str] = set()
         self._worker: asyncio.Task | None = None
         self._heuristic = HeuristicAbstractor()
+        # A brain that keeps missing the budget is stood down. Measured: a
+        # 27B model sharing the GPU with the renderer took 175s a call and
+        # stretched a 100s render to 462s — the wall went procedural while
+        # it thought. After max_slow_calls consecutive misses the heuristic
+        # takes over for the rest of the party, and status says why.
+        self.max_slow_calls = int(max_slow_calls)
+        self._slow_streak = 0
+        self._stood_down: str | None = None
         # Counters are content-blind and safe to surface in ZoneStatus.
         self.cycles = 0
         self.prompts_synthesized = 0
@@ -97,6 +106,30 @@ class Weaver:
         self.purges_requested = 0
         self.fallbacks = 0
         self.last_theme: ThemeObject | None = None  # thematic memory (T-5)
+
+    @property
+    def engine_name(self) -> str:
+        """What is writing the themes right now, for the status page."""
+        if self._stood_down:
+            return f"heuristic ({self._stood_down})"
+        return getattr(self.abstractor, "name", "heuristic")
+
+    def _note_call(self, seconds: float, *, timed_out: bool) -> None:
+        if self._stood_down or isinstance(self.abstractor, HeuristicAbstractor):
+            return
+        if timed_out or seconds > self.stage1_budget_s:
+            self._slow_streak += 1
+            if self._slow_streak >= self.max_slow_calls:
+                self._stood_down = (
+                    f"{getattr(self.abstractor, 'name', 'llm')} too slow for this machine: "
+                    f"{self._slow_streak} calls over {self.stage1_budget_s:.0f}s"
+                )
+                log.warning("weaver: %s — the heuristic takes over", self._stood_down)
+                self.abstractor = self._heuristic
+                self._queue.clear()
+        else:
+            self._slow_streak = 0
+        # Counters are content-blind and safe to surface in ZoneStatus.
 
     async def weave(
         self,
@@ -214,7 +247,9 @@ class Weaver:
             theme: ThemeObject | None = None
             try:
                 self._steer()
+                started = asyncio.get_event_loop().time()
                 candidate = await self.abstractor.abstract(text, mood, attempt=0)
+                self._note_call(asyncio.get_event_loop().time() - started, timed_out=False)
                 if validate_theme(candidate, text).ok:
                     theme = candidate
                 else:
@@ -245,15 +280,19 @@ class Weaver:
         lag on the whole wall: past the budget the heuristic answers instead.
         """
         self._steer()
+        started = asyncio.get_event_loop().time()
         try:
-            return await asyncio.wait_for(
+            theme = await asyncio.wait_for(
                 self.abstractor.abstract(text, mood, attempt=0),
                 timeout=self.stage1_budget_s,
             )
         except TimeoutError:
+            self._note_call(self.stage1_budget_s, timed_out=True)
             log.warning("weaver stage-1 over budget (%.0fs); heuristic stands in",
                         self.stage1_budget_s)
             return await self._heuristic.abstract(text, mood, attempt=0)
+        self._note_call(asyncio.get_event_loop().time() - started, timed_out=False)
+        return theme
 
     async def weave_candidates(
         self,

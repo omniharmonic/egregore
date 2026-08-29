@@ -994,3 +994,27 @@ def test_autodetect_prefers_the_smallest_chat_model(monkeypatch):
     listed = ["qwen/qwen3.8-27b", "text-embedding-nomic", "google/gemma-3-4b", "llama-3.1-8b-instruct"]
     a = build_abstractor(WeaverConfig(), probe=lambda url: listed if "1234" in url else None)
     assert a.model == "google/gemma-3-4b"
+
+
+async def test_a_brain_too_slow_for_this_machine_steps_aside():
+    # Measured: a 27B model sharing the GPU with the video renderer took
+    # 175s a call and stretched a 100s render to 462s. A brain that keeps
+    # missing the budget must hand over to the heuristic and say so, or the
+    # wall goes procedural while it thinks.
+    slow = SlowCounting(delay=0.3)
+    w = Weaver(slow, stage1_budget_s=0.05, max_slow_calls=2)
+    for i in range(3):
+        await w.weave_candidates([seg(f"the tide pools were glowing green tonight number {i}", i)])
+    assert w.engine_name.startswith("heuristic")
+    assert "too slow" in w.engine_name
+    calls = slow.calls
+    await w.weave_candidates([seg("gears and pressure and copper machines", 9)])
+    assert slow.calls == calls, "the slow brain is no longer consulted"
+
+
+async def test_a_brain_within_budget_is_kept():
+    quick = SlowCounting(delay=0.0)
+    w = Weaver(quick, stage1_budget_s=1.0, max_slow_calls=2)
+    for i in range(4):
+        await w.weave_candidates([seg(f"the tide pools were glowing green tonight number {i}", i)])
+    assert w.engine_name == "slow"
