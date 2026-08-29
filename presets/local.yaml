@@ -1,0 +1,102 @@
+# ---------------------------------------------------------------------------
+# LOCAL — the default party. Everything on this machine, nothing leaves it.
+#
+#   uv run egregore run presets/local.yaml
+#
+# Needs: ComfyUI with LTX-Video on :8188, Parakeet for transcription, a
+# microphone. Optional but strongly recommended: LM Studio or Ollama running
+# a small chat model — it is auto-detected and turns talk into far richer
+# themes than the built-in matcher. See docs/setup.md.
+#
+# Every value here can be changed while the party runs from
+# http://<this-machine>:8420/static/setup.html — except the few marked
+# "restart".
+# ---------------------------------------------------------------------------
+
+party:
+  name: "Local Party"
+  duration_hours: 6
+
+aesthetic:
+  # The look every prompt is built on. Edit it on the dashboard's "look"
+  # panel while the party runs; the next clip uses it.
+  grammar: |
+    Cinematic and atmospheric, shot on real film. Volumetric light through
+    haze, deep shadow, anamorphic flare, gentle grain. Slow dolly and rack
+    focus; movement continuous and liquid, never cutting, never frantic.
+    Real materials and real light. Suggest a place without naming one:
+    no readable text, no recognizable faces, nothing identifiable.
+  # 0 = show what people are talking about, recognisably.  1 = pure
+  # abstraction, never a literal object.  0.5 is the sweet spot: the room
+  # can tell the wall is listening, and it still looks like art.
+  abstraction: 0.5
+  # How far a prompt may wander from the themes it was given (0 = stay close).
+  drift: 0.35
+  # How much the sound of the room shapes the palette (1 = a quiet room asks
+  # for a dark palette; 0.5 = energy and rhythm only; 0 = not mentioned).
+  room_bias: 0.5
+
+generation:
+  backend: "local"            # restart. local | fal | veo | procedural
+  fallback: "procedural"      # never let the room go dark
+  clip_duration_s: 4          # what the local model renders in time
+  fill_duration_s: 12         # free procedural fills: long enough to linger on
+  # How hard the GPU works per clip: fast ~80s, balanced ~2 min, high ~4 min
+  # on an Apple-silicon laptop. Drop to "fast" if clips come too slowly;
+  # go "high" on a workstation. local_steps / local_resolution override it.
+  local_quality: "balanced"
+  comfyui_url: "http://127.0.0.1:8188"   # restart. Point at another box to split the GPU work.
+
+weaver:
+  # Which brain turns talk into themes. auto = a local LLM if LM Studio or
+  # Ollama is running, else the built-in matcher. Set llm.model to pin one;
+  # the smallest chat model the server offers is used otherwise.
+  engine: "auto"
+  llm:
+    autodetect: true
+  # Silence a room may sit in before a clip is rendered from mood alone.
+  fallback_after_s: 120
+  # Which of the things the room said becomes the next clip (sliders on the
+  # dashboard, per zone). Weights need not sum to one.
+  selection:
+    salience: 0.35            # what the room dwelt on
+    novelty: 0.2              # distance from what was just shown (low: coherent chains)
+    recency: 0.45             # what was said most recently
+    segment_gap_s: 6          # a pause this long ends one thought and starts the next
+
+budget:
+  total_usd: 0                # restart. 0 means no cloud call is even possible.
+
+continuity:
+  default_mode: "continuity"  # each clip grows out of the last one's final frame
+  max_chain_length: 8         # then a fresh movement begins
+  topology: "independent"     # restart. independent | commons | mirror (see README)
+  loop_half_life_min: 40      # how long a clip stays in heavy rotation
+  loop_floor_weight: 0.2      # even old clips keep a real chance of playing
+  active_pool_max: 120
+
+asr:
+  engine: "parakeet"          # restart. parakeet | faster-whisper
+  language: "en"
+
+zones:
+  - id: "main"
+    mic: { type: "usb", device: null }   # restart. null = system default input; or a device name
+    playback_rate: 0.7        # below 1 the motion is languid and each clip holds longer
+    hold_s: 20                # linger: a composition stays up at least this long
+    crossfade_s: 4            # seconds one clip takes to dissolve into the next
+    lens_stack: ["flow", "smoke", "bloom"]   # the effects, in order (dashboard: effects)
+    screens: ["screen-1"]
+
+screens:
+  - id: "screen-1"            # open http://<this-machine>:8420/?zone=main&screen=screen-1
+    loop_phase_offset: 0.0
+
+privacy:
+  ring_buffer_minutes: 6      # transcript text lives this long, in memory only
+  signage_required: true      # the join page shows the notice guests must see
+
+serving:
+  bind: "0.0.0.0:8420"        # restart. Reachable from every device on the LAN.
+
+clip_store_dir: "var/clips-local"

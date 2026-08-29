@@ -1,0 +1,29 @@
+# Soak test against fal.ai: the same scripted conversation as soak-local,
+# rendered in the cloud. Budget is a hard ceiling. Run with tools/soak.py.
+party: { name: "Soak Cloud", duration_hours: 2 }
+aesthetic: { abstraction: 0.5, drift: 0.35, room_bias: 0.5 }
+generation:
+  backend: "fal"
+  fal_model: "minimax-h3-max"
+  resolution: "480p"
+  clip_duration_s: 5
+  fallback: "procedural"
+  fill_duration_s: 12
+weaver:
+  engine: "auto"
+  fallback_after_s: 120
+  selection: { salience: 0.35, novelty: 0.3, recency: 0.35, segment_gap_s: 6 }
+budget: { total_usd: 3 }
+continuity: { default_mode: "mosaic", loop_half_life_min: 30 }
+asr: { engine: "parakeet", language: "en" }
+zones:
+  - id: "main"
+    mic: { type: "usb", device: "BlackHole 2ch" }
+    playback_rate: 0.7
+    hold_s: 12
+    crossfade_s: 4
+    lens_stack: ["flow", "bloom"]
+    screens: ["screen-1"]
+screens: [{ id: "screen-1" }]
+privacy: { signage_required: false }
+clip_store_dir: "var/clips-soak-cloud"

@@ -1,0 +1,72 @@
+# ---------------------------------------------------------------------------
+# CLOUD — video from fal.ai, so no GPU is needed here.
+#
+#   uv run egregore setup            # paste FAL_KEY once; stored at ~/.egregore/env
+#   uv run egregore run presets/cloud.yaml
+#
+# Transcription still happens on this machine (Parakeet); only the validated,
+# abstracted prompt leaves it. The budget below is a hard ceiling: the party
+# cannot spend past it, and when it is reached the procedural fallback keeps
+# the wall alive. See docs/fal-setup.md and the models panel on the dashboard.
+# ---------------------------------------------------------------------------
+
+party:
+  name: "Cloud Party"
+  duration_hours: 4
+
+aesthetic:
+  grammar: |
+    Cinematic and atmospheric, shot on real film. Volumetric light through
+    haze, deep shadow, anamorphic flare, gentle grain. Slow dolly and rack
+    focus; movement continuous and liquid, never cutting, never frantic.
+    Real materials and real light. Suggest a place without naming one:
+    no readable text, no recognizable faces, nothing identifiable.
+  abstraction: 0.5
+  drift: 0.35
+  room_bias: 0.5
+
+generation:
+  backend: "fal"              # restart
+  fal_model: "minimax-h3-max" # restart. Any key from the dashboard's models panel.
+  resolution: "768p"          # what fal bills at; the models panel shows prices
+  clip_duration_s: 6
+  fallback: "procedural"
+
+weaver:
+  engine: "auto"
+  fallback_after_s: 120
+  selection: { salience: 0.35, novelty: 0.3, recency: 0.35, segment_gap_s: 6 }
+
+budget:
+  total_usd: 15               # restart. Hard ceiling for the whole party.
+
+continuity:
+  default_mode: "mosaic"      # cloud models cannot continue their own clips
+  loop_half_life_min: 45
+  loop_floor_weight: 0.2
+  active_pool_max: 120
+
+asr:
+  engine: "parakeet"
+  language: "en"
+
+zones:
+  - id: "main"
+    mic: { type: "usb", device: null }
+    playback_rate: 0.7
+    hold_s: 12
+    crossfade_s: 4
+    lens_stack: ["flow", "bloom"]
+    screens: ["screen-1"]
+
+screens:
+  - id: "screen-1"
+
+privacy:
+  ring_buffer_minutes: 6
+  signage_required: true
+
+serving:
+  bind: "0.0.0.0:8420"
+
+clip_store_dir: "var/clips-cloud"

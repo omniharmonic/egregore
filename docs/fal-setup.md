@@ -22,7 +22,7 @@ The free run posts a deliberately empty request: a good key is rejected with a
 ## Running it
 
     export FAL_KEY="..."
-    uv run egregore run presets/fal-demo.yaml
+    uv run egregore run presets/cloud.yaml
     # http://127.0.0.1:8440/?zone=main
 
 The ladder in that preset is **fal -> ComfyUI/LTX -> procedural**. A refusal, an

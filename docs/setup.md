@@ -4,7 +4,7 @@
 
 - **Core node**: any Linux/macOS machine. For fully local generation: one
   machine with a decent GPU (single-box mode is first-class — see
-  `presets/local-onebox.yaml`).
+  `presets/local.yaml`).
 - **Screens**: anything with a browser (laptop, mini-PC, TV stick, tablet).
 - **Mics**: USB condenser per zone, placed away from speakers.
 - **Network**: a dedicated router/AP for the party. Not venue guest wifi.

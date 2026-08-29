@@ -20,7 +20,9 @@ continuity:
   max_chain_length: 8
 
 aesthetic:
-  abstraction: 0.85
+  abstraction: 0.5
+  drift: 0.35
+  room_bias: 0.5
 
 weaver:
   fallback_after_s: 120

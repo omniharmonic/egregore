@@ -50,7 +50,7 @@ buffer, not decorative.
 
 ## When phones are microphones
 
-A party using `presets/party.yaml` takes its audio from guests' own devices.
+A party using `presets/two-rooms.yaml` takes its audio from guests' own devices.
 The posted notice needs one more sentence:
 
 > Phones acting as microphones send audio over this building's wifi to the

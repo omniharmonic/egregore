@@ -1,33 +1,34 @@
-# Demo preset — runs the full pipeline with no mic, no GPU, no API key.
-# A scripted conversation drives the real ring buffer, weaver, validator,
-# governor, forge (procedural local renderer), loom, and lens.
+# ---------------------------------------------------------------------------
+# DEMO — no hardware at all. A scripted conversation, procedural video.
+#
+#   uv run egregore run presets/demo.yaml
+#   open http://localhost:8420/?zone=main
+#
+# The first thing to run after installing: it proves the server, the
+# screens, the effects and the whole prompt pipeline without a microphone,
+# a GPU, a model, or a key. Nothing is spent and nothing leaves the machine.
+# ---------------------------------------------------------------------------
 
 party:
-  name: "Demo Dream"
-  duration_hours: 1.0
+  name: "Demo"
+  duration_hours: 1
 
 aesthetic:
-  grammar: |
-    Abstract, symbolic, non-representational. Deep saturated color,
-    organic forms dissolving into geometric ones. Movement slow and
-    liquid, never cutting, never frantic. Suggest meaning without
-    depicting it: no readable text, no recognizable faces, no literal
-    objects from the described themes. The register is reverent and
-    mysterious, closer to stained glass and deep-sea bioluminescence
-    than to psychedelia-as-decoration.
-  drift: 0.4
+  abstraction: 0.5
+  room_bias: 0.5
 
 generation:
-  backend: "mock"
+  backend: "procedural"
+  fallback: "none"
   clip_duration_s: 8
-  fallback: "mock"
+  fill_duration_s: 12
 
 budget:
-  total_usd: 0            # zero-budget mode: no cloud calls possible
+  total_usd: 0
 
 continuity:
   default_mode: "mosaic"
-  loop_half_life_min: 10  # scaled to the short demo run
+  loop_half_life_min: 10
   active_pool_max: 60
 
 asr:
@@ -35,19 +36,20 @@ asr:
 
 zones:
   - id: "main"
-    mic: { type: "fixture" }   # uses the built-in demo conversation
-    lens_stack: ["flow", "feedback", "glitch", "crt"]
+    mic: { type: "fixture" }          # the built-in scripted conversation
+    playback_rate: 0.7
+    hold_s: 15
+    crossfade_s: 4
+    lens_stack: ["flow", "smoke", "bloom"]
     screens: ["screen-1"]
 
 screens:
   - id: "screen-1"
-    loop_phase_offset: 0.0
 
 privacy:
-  ring_buffer_minutes: 5
-  signage_required: false     # demo only; real presets keep this true
+  signage_required: false             # demo only; real presets keep this on
 
 serving:
   bind: "0.0.0.0:8420"
 
-demo_time_scale: 8            # scripted conversation plays 8x faster
+demo_time_scale: 8                    # the scripted conversation plays 8x faster

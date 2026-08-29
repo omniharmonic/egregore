@@ -1,61 +1,68 @@
-# Two rooms, two conversations, two dreams. Each zone hears only its own
-# microphones and renders its own loop — topology: independent.
+# ---------------------------------------------------------------------------
+# TWO ROOMS — phones as microphones, one screen per room.
 #
-#   uv run egregore run presets/two-rooms.yaml --ignore-settings
+#   uv run egregore run presets/two-rooms.yaml
 #
-# Both zones take their audio from enrolled browsers, so a phone in the
-# kitchen feeds the kitchen and a phone in the workshop feeds the workshop.
+# Guests open http://<this-machine>:8420 on a phone, pick a room and
+# "transmit"; that phone becomes the room's microphone. Each room dreams its
+# own loop. Change topology to "commons" for one shared conversation with a
+# loop per room, or "mirror" for one loop on every screen.
+# ---------------------------------------------------------------------------
 
 party:
   name: "Two Rooms"
-  duration_hours: 1.0
+  duration_hours: 5
 
 aesthetic:
-  grammar: |
-    Abstract, symbolic, non-representational. Deep saturated color,
-    organic forms dissolving into geometric ones. Movement slow and
-    liquid, never cutting, never frantic. Suggest meaning without
-    depicting it: no readable text, no recognizable faces, no literal
-    objects from the described themes.
-  drift: 0.4
+  abstraction: 0.5
+  room_bias: 0.5
 
 generation:
-  backend: "procedural"
-  clip_duration_s: 6
-  fallback: "none"
+  backend: "local"
+  fallback: "procedural"
+  clip_duration_s: 4
+  fill_duration_s: 12
+  local_quality: "balanced"
+
+weaver:
+  engine: "auto"
+  selection: { salience: 0.35, novelty: 0.2, recency: 0.45, segment_gap_s: 6 }
 
 budget:
   total_usd: 0
 
 continuity:
-  default_mode: "mosaic"
+  default_mode: "continuity"
+  max_chain_length: 8
   topology: "independent"
-  loop_half_life_min: 30
-  active_pool_max: 60
 
 asr:
   engine: "parakeet"
-  language: "en"
 
 zones:
   - id: "kitchen"
-    mic: { type: "network" }
-    lens_stack: ["flow", "feedback", "bloom"]
+    mic: { type: "network" }          # phones that enrol as "kitchen" transmitters
+    playback_rate: 0.7
+    hold_s: 20
+    crossfade_s: 4
+    lens_stack: ["flow", "smoke", "bloom"]
     screens: ["kitchen-screen"]
-  - id: "workshop"
+  - id: "lounge"
     mic: { type: "network" }
-    lens_stack: ["glitch", "chroma", "crt"]
-    screens: ["workshop-screen"]
+    playback_rate: 0.7
+    hold_s: 20
+    crossfade_s: 4
+    lens_stack: ["liquid", "bloom", "crt"]
+    screens: ["lounge-screen"]
 
 screens:
-  - id: "kitchen-screen"
-    loop_phase_offset: 0.0
-  - id: "workshop-screen"
+  - id: "kitchen-screen"              # ?zone=kitchen&screen=kitchen-screen
+  - id: "lounge-screen"               # ?zone=lounge&screen=lounge-screen
     loop_phase_offset: 0.5
 
 privacy:
   ring_buffer_minutes: 6
-  signage_required: false
+  signage_required: true
 
 serving:
   bind: "0.0.0.0:8420"

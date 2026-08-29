@@ -36,7 +36,7 @@ ffmpeg renderer. `ffmpeg` on your PATH is the only hard dependency.
 ## Run a party
 
 ```bash
-uv run egregore run presets/party.yaml
+uv run egregore run presets/two-rooms.yaml
 ```
 
 The banner prints the address. Anyone on the same wifi opens it on a phone and
@@ -78,10 +78,10 @@ starves regardless of GPUs, networks, or budgets.
 | Backend | Needs | Speed | Cost | Try it |
 |---|---|---|---|---|
 | `procedural` | ffmpeg | instant | free | `presets/demo.yaml` |
-| `procedural` + live mic | ffmpeg, a microphone | instant | free | `presets/live-mic.yaml` |
-| `local` | ComfyUI + a video model | ~1.5–5 min/clip | free | `presets/local-demo.yaml` |
-| `fal` | `FAL_KEY` | ~1–2 min/clip | ~$0.025/s | `presets/fal-demo.yaml` |
-| `veo` | `GEMINI_API_KEY` | ~1 min/clip | $0.05–0.60/s | `presets/house-party.yaml` |
+| `procedural` + live mic | ffmpeg, a microphone | instant | free | `presets/local.yaml` |
+| `local` | ComfyUI + a video model | ~1.5–5 min/clip | free | `presets/local.yaml` |
+| `fal` | `FAL_KEY` | ~1–2 min/clip | ~$0.025/s | `presets/cloud.yaml` |
+| `veo` | `GEMINI_API_KEY` | ~1 min/clip | $0.05–0.60/s | `presets/cloud.yaml` |
 
 Set `backend:` to your preference and `fallback:` to what should catch it.
 
@@ -116,7 +116,7 @@ synthesised: a slow sine "music bed" with bursts around the scripted
 conversation. The panel says so in as many words. For a real room:
 
 ```bash
-uv run egregore run presets/live-mic.yaml
+uv run egregore run presets/local.yaml
 ```
 
 That preset is real microphone plus real on-device transcription plus the
@@ -285,7 +285,7 @@ See [docs/veo-setup.md](docs/veo-setup.md).
 
 **The visuals move but nothing is listening.** Check the **audio** panel. If
 it says *Source: fixture*, the numbers are synthetic and no microphone is
-open — that is every demo preset. Use `presets/live-mic.yaml` for a real room.
+open — that is every demo preset. Use `presets/local.yaml` for a real room.
 
 **The microphone produces `PortAudio -9986`.** macOS is refusing microphone
 access to your terminal, and reports it as a device fault. Grant it in System
