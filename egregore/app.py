@@ -426,6 +426,11 @@ class ZonePipeline:
         #: Forge.paid_completed at the moment of the last paid request, so
         #: on_clip can tell that clip from a fill that lands first.
         self._paid_done_at_request = 0
+        #: Lag of the most recent paid clip to land: last word of the winning
+        #: thought to clip on disk. Kept apart from ``last_selection`` because
+        #: under pull scheduling the next cycle starts the second a clip
+        #: lands and would overwrite the record before anyone read it.
+        self.last_lag_s: float | None = None
         self._tasks: list[asyncio.Task] = []
         self._source = self._build_source(cfg)
 
@@ -527,7 +532,8 @@ class ZonePipeline:
             # Only the clip this selection asked for — a fill landing first
             # would otherwise report a four-second lag on an eighty-second
             # render. Monotonic domain, like the ring's fragment stamps.
-            self.last_selection["lag_s"] = round(time.monotonic() - self._lag_anchor, 1)
+            self.last_lag_s = round(time.monotonic() - self._lag_anchor, 1)
+            self.last_selection["lag_s"] = self.last_lag_s
             self._lag_anchor = None
 
     # -- the generation loop ------------------------------------------------
@@ -780,6 +786,7 @@ class ZonePipeline:
             "purges": self.weaver.purges_requested,
             "bleeds": self.bleeds,
             "in_flight": self.forge.in_flight(self.zone),
+            "lag_s": self.last_lag_s,
             "waited_for_slot": self.waited_for_slot,
             "last_selection": (
                 {k: v for k, v in self.last_selection.items() if k != "scored"}

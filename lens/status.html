@@ -271,7 +271,7 @@
       // is the last word of the winning thought to the clip landing — the
       // number that says the screen belongs to this conversation.
       var sel = z.last_selection || null;
-      if (sel && sel.lag_s != null) flags.push('lag ' + Math.round(sel.lag_s) + 's');
+      if (z.lag_s != null) flags.push('lag ' + Math.round(z.lag_s) + 's');
       if (sel && sel.candidates > 1) flags.push(sel.candidates + ' cands');
       if (z.waited_for_slot) flags.push('waited ' + z.waited_for_slot);
       var cls = '';

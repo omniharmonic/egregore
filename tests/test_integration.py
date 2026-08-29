@@ -535,12 +535,11 @@ async def test_selection_is_recorded_and_lag_is_measured(tmp_path):
         pipe = party.pipelines["main"]
         await party.wait_clips(2, "main")
         deadline = time.monotonic() + 10
-        while (pipe.last_selection is None or pipe.last_selection.get("lag_s") is None) \
-                and time.monotonic() < deadline:
+        while pipe.last_lag_s is None and time.monotonic() < deadline:
             await asyncio.sleep(0.1)
-        sel = pipe.status()["last_selection"]
-        assert sel is not None and sel["candidates"] >= 1
-        assert sel["lag_s"] is not None and sel["lag_s"] >= 0
+        st = pipe.status()
+        assert st["last_selection"] is not None and st["last_selection"]["candidates"] >= 1
+        assert st["lag_s"] is not None and st["lag_s"] >= 0
         assert "throttled" not in pipe.status()
         assert pipe.status()["in_flight"] in (0, 1)
 
@@ -570,13 +569,13 @@ async def test_lag_is_measured_on_the_paid_clip_not_a_fill(tmp_path):
         while (pipe.last_selection is None) and time.monotonic() < deadline:
             await asyncio.sleep(0.1)
         assert pipe.last_selection is not None
-        assert pipe.last_selection.get("lag_s") is None, "a fill must not stamp the lag"
+        assert pipe.last_lag_s is None, "a fill must not stamp the lag"
         held = time.monotonic()
         await asyncio.sleep(2.0)
         slow.gate.set()
         deadline = time.monotonic() + 20
-        while pipe.last_selection.get("lag_s") is None and time.monotonic() < deadline:
+        while pipe.last_lag_s is None and time.monotonic() < deadline:
             await asyncio.sleep(0.1)
-        lag = pipe.last_selection.get("lag_s")
+        lag = pipe.last_lag_s
         assert lag is not None and lag >= (time.monotonic() - held) - 0.5
         slow.gate.set()
