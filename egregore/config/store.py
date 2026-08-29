@@ -41,6 +41,7 @@ SECRET_NAMES: tuple[str, ...] = ("FAL_KEY", "GEMINI_API_KEY", "EGREGORE_PARTY_PA
 LIVE_KEYS: frozenset[str] = frozenset({
     "generation.clip_duration_s",
     "generation.resolution",
+    "generation.local_quality",
     "generation.local_steps",
     "generation.fill_duration_s",
     "generation.local_resolution",

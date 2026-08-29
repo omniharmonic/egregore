@@ -27,7 +27,13 @@ from pathlib import Path
 
 from egregore.conductor import ConductorState, create_app
 from egregore.config import store as config_store
-from egregore.config.schema import EgregoreConfig, SelectionConfig, ZoneConfig
+from egregore.config.schema import (
+    LOCAL_QUALITY,
+    EgregoreConfig,
+    SelectionConfig,
+    ZoneConfig,
+    resolve_local_effort,
+)
 from egregore.forge import (
     ClipStore,
     ComfyUIBackend,
@@ -94,8 +100,8 @@ def build_ladder(cfg: EgregoreConfig, store: ClipStore) -> list[VideoBackend]:
                 workflow=_comfy_workflow(),
                 seed_workflow=_comfy_workflow("ltxv-2b-seeded.json",
                                               env="EGREGORE_COMFY_SEED_WORKFLOW"),
-                steps=cfg.generation.local_steps,
-                resolution=cfg.generation.local_resolution,
+                steps=resolve_local_effort(cfg.generation)[0],
+                resolution=resolve_local_effort(cfg.generation)[1],
             )
         )
     # The procedural renderer ("mock") is a real zero-cost backend, always last.
@@ -236,6 +242,7 @@ class LiveSettings:
     #: operator can trade fidelity for responsiveness while the room is
     #: running — a restart would drop the clip pool and the chain with it.
     #: None on either leaves the graph's own value alone.
+    local_quality: str = "balanced"
     local_steps: int | None = None
     local_resolution: str | None = None
     #: The local rungs these knobs are pushed to. Populated by
@@ -268,10 +275,17 @@ class LiveSettings:
         self._local_backends = [b for b in ladder if isinstance(b, ComfyUIBackend)]
         self._push_hardware()
 
+    def effective_local_effort(self) -> tuple[int, str]:
+        """The level's numbers, each overridden by an explicit one if set."""
+        steps, size = LOCAL_QUALITY.get(self.local_quality, LOCAL_QUALITY["balanced"])
+        return (self.local_steps if self.local_steps is not None else steps,
+                self.local_resolution if self.local_resolution is not None else size)
+
     def _push_hardware(self) -> None:
+        steps, size = self.effective_local_effort()
         for backend in self._local_backends:
-            backend.steps = self.local_steps
-            backend.resolution = self.local_resolution
+            backend.steps = steps
+            backend.resolution = size
 
     @classmethod
     def from_config(cls, cfg: EgregoreConfig) -> LiveSettings:
@@ -282,6 +296,7 @@ class LiveSettings:
             grammar=cfg.aesthetic.grammar,
             abstraction=cfg.aesthetic.abstraction,
             room_bias=cfg.aesthetic.room_bias,
+            local_quality=cfg.generation.local_quality,
             local_steps=cfg.generation.local_steps,
             local_resolution=cfg.generation.local_resolution,
             fallback_after_s=cfg.weaver.fallback_after_s,
@@ -311,6 +326,11 @@ class LiveSettings:
         if "fill_duration_s" in gen:
             self.fill_duration_s = int(gen["fill_duration_s"])
             changed.append("generation.fill_duration_s")
+        if "local_quality" in gen:
+            level = str(gen["local_quality"])
+            if level in LOCAL_QUALITY:
+                self.local_quality = level
+                changed.append("generation.local_quality")
         if "local_steps" in gen:
             raw = gen["local_steps"]
             self.local_steps = int(raw) if raw not in (None, "") else None
@@ -319,7 +339,7 @@ class LiveSettings:
             raw = gen["local_resolution"]
             self.local_resolution = str(raw) if raw not in (None, "") else None
             changed.append("generation.local_resolution")
-        if "local_steps" in gen or "local_resolution" in gen:
+        if any(k in gen for k in ("local_quality", "local_steps", "local_resolution")):
             self._push_hardware()
         weaver_over = overrides.get("weaver") or {}
         if "fallback_after_s" in weaver_over:

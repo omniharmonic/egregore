@@ -39,8 +39,7 @@ generation:
   # it from the dashboard while the party runs, no restart. Leave either
   # blank to use whatever your own ComfyUI workflow file specifies.
   fill_duration_s: 12       # fills are free: long enough to linger on
-  local_steps: 8
-  local_resolution: "512x320"
+  local_quality: "balanced"   # fast | balanced | high; ~80s / ~2 min / ~4 min on a laptop
 
 budget:
   total_usd: 0               # structurally cannot reach any cloud

@@ -667,3 +667,19 @@ async def test_lookback_limits_candidates_to_recent_speech(tmp_path):
         assert theme is not None
         assert pipe.last_selection["candidates"] == 1
         assert pipe.last_selection["age_s"] < 60
+
+
+async def test_local_quality_is_live_and_reaches_the_backend(tmp_path):
+    from egregore.config.schema import LOCAL_QUALITY
+    from egregore.forge import ClipStore, ComfyUIBackend
+    cfg = _cfg(tmp_path, zones=[{"id": "main", "mic": {"type": "fixture"}}])
+    local = ComfyUIBackend(ClipStore(Path(cfg.clip_store_dir)))
+    async with Party(cfg, ladder=[local, MockBackend(ClipStore(Path(cfg.clip_store_dir)), name="procedural")]) as party:
+        party.live.bind_backends(party.ladder)
+        assert (local.steps, local.resolution) == LOCAL_QUALITY["balanced"]
+        party.state.settings_handler({"generation": {"local_quality": "high"}})
+        assert (local.steps, local.resolution) == LOCAL_QUALITY["high"]
+        party.state.settings_handler({"generation": {"local_steps": 7}})
+        assert local.steps == 7 and local.resolution == LOCAL_QUALITY["high"][1]
+        party.state.settings_handler({"generation": {"local_steps": None}})
+        assert local.steps == LOCAL_QUALITY["high"][0], "clearing the number returns to the level"

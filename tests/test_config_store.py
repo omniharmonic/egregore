@@ -294,3 +294,18 @@ def test_lookback_and_room_bias_are_config_and_live():
     assert cfg.aesthetic.room_bias == 1.0
     assert "weaver.selection.lookback_s" in store.LIVE_KEYS
     assert "aesthetic.room_bias" in store.LIVE_KEYS
+
+
+def test_local_quality_levels_resolve_to_steps_and_size():
+    from egregore.config.schema import LOCAL_QUALITY, resolve_local_effort
+    cfg = EgregoreConfig()
+    assert cfg.generation.local_quality == "balanced"
+    assert set(LOCAL_QUALITY) == {"fast", "balanced", "high"}
+    assert resolve_local_effort(cfg.generation) == LOCAL_QUALITY["balanced"]
+    fast = EgregoreConfig.model_validate({"generation": {"local_quality": "fast"}})
+    assert resolve_local_effort(fast.generation)[0] < LOCAL_QUALITY["balanced"][0]
+    # Explicit numbers win over the level, field by field.
+    custom = EgregoreConfig.model_validate({"generation": {"local_quality": "high", "local_steps": 9}})
+    steps, size = resolve_local_effort(custom.generation)
+    assert steps == 9 and size == LOCAL_QUALITY["high"][1]
+    assert "generation.local_quality" in store.LIVE_KEYS

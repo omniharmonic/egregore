@@ -98,6 +98,16 @@ class WeaverConfig(BaseModel):
     stage1_budget_s: float = Field(10.0, ge=0.5, le=120.0)
 
 
+#: What "how hard should the local GPU work" means, as (steps, "WxH").
+#: Measured on an Apple-silicon laptop with LTX-Video 2B, 4-second clips:
+#: fast ~80s, balanced ~2 min, high ~4 min. A bigger GPU shifts all three.
+LOCAL_QUALITY: dict[str, tuple[int, str]] = {
+    "fast": (8, "512x320"),
+    "balanced": (12, "640x384"),
+    "high": (20, "768x448"),
+}
+
+
 class GenerationConfig(BaseModel):
     # "procedural" is the zero-cost ffmpeg renderer — a real backend, not
     # just a test double ("mock" is kept as an alias). "local" is diffusion
@@ -122,6 +132,12 @@ class GenerationConfig(BaseModel):
     # which is sized for what the paid backend can render in time: a fill
     # costs nothing, and a composition worth lingering on should be long.
     fill_duration_s: int = Field(12, ge=2, le=16)
+    # How hard the local GPU works per clip, as a word. The default is the
+    # one that looks good and lands in about two minutes on a laptop; a box
+    # that cannot keep up drops to "fast", a workstation goes "high". The
+    # two numbers below override the level field by field for anyone who
+    # wants exact control; blank means "the level decides".
+    local_quality: Literal["fast", "balanced", "high"] = "balanced"
     local_steps: int | None = Field(None, ge=1, le=100)
     local_resolution: str | None = None  # e.g. "512x320"
 
@@ -288,6 +304,14 @@ class EgregoreConfig(BaseModel):
             if z.id == zone_id and z.selection is not None:
                 return z.selection
         return self.weaver.selection
+
+
+def resolve_local_effort(gen: GenerationConfig) -> tuple[int | None, str | None]:
+    """(steps, resolution) the local renderer should use: the level's
+    numbers, each overridden by an explicit one if set."""
+    steps, size = LOCAL_QUALITY[gen.local_quality]
+    return (gen.local_steps if gen.local_steps is not None else steps,
+            gen.local_resolution if gen.local_resolution is not None else size)
 
 
 def load_config(path: str | Path) -> EgregoreConfig:
