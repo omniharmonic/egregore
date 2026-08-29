@@ -1718,3 +1718,38 @@ async def test_paid_completed_counts_only_the_paid_lane(tmp_path):
         assert forge.paid_completed("z") == 1
     finally:
         await forge.close()
+
+
+async def test_store_index_survives_a_restart(tmp_path: Path) -> None:
+    # The pool on disk is worth nothing to a fresh process unless it can
+    # tell what each file is. Provenance only — no prompt, no text.
+    store = ClipStore(tmp_path / "clips")
+    src = tmp_path / "a.mp4"
+    src.write_bytes(b"\x00" * 64)
+    ref = await store.put(src, duration_s=4.0, zone="main", backend="local", tier="fast",
+                          movement_id="m1", chain_index=2)
+    again = ClipStore(tmp_path / "clips")
+    got = again.get(ref.id)
+    assert got is not None
+    assert (got.zone, got.backend, got.tier, got.duration_s) == ("main", "local", "fast", 4.0)
+    assert (got.movement_id, got.chain_index) == ("m1", 2)
+    assert got.created_at == ref.created_at
+    assert got.path.is_file()
+
+
+async def test_store_index_ignores_a_file_that_is_gone(tmp_path: Path) -> None:
+    store = ClipStore(tmp_path / "clips")
+    src = tmp_path / "a.mp4"
+    src.write_bytes(b"\x01" * 64)
+    ref = await store.put(src, duration_s=4.0, zone="main", backend="local", tier="fast")
+    ref.path.unlink()
+    assert ClipStore(tmp_path / "clips").get(ref.id) is None
+
+
+async def test_store_wipe_removes_the_index_too(tmp_path: Path) -> None:
+    store = ClipStore(tmp_path / "clips")
+    src = tmp_path / "a.mp4"
+    src.write_bytes(b"\x02" * 64)
+    await store.put(src, duration_s=4.0, zone="main", backend="local", tier="fast")
+    store.wipe()
+    assert len(ClipStore(tmp_path / "clips")) == 0

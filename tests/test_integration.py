@@ -120,6 +120,7 @@ class Party:
         self.governor.start()
         self.forge.start()
         for p in self.pipelines.values():
+            await p.resume(self.store.all())
             await p.run()
         return self
 
@@ -579,3 +580,17 @@ async def test_lag_is_measured_on_the_paid_clip_not_a_fill(tmp_path):
         lag = pipe.last_lag_s
         assert lag is not None and lag >= (time.monotonic() - held) - 0.5
         slow.gate.set()
+
+
+async def test_a_restart_picks_the_pool_back_up(tmp_path):
+    # A party that restarts should not go dark: the clips on disk are
+    # re-ingested so screens have material at once and, in continuity, the
+    # chain can seed from the newest one.
+    cfg = _cfg(tmp_path, zones=[{"id": "main", "mic": {"type": "fixture"}}], mode="continuity")
+    async with Party(cfg) as party:
+        await party.wait_clips(2, "main")
+    async with Party(cfg) as party:
+        pipe = party.pipelines["main"]
+        assert pipe.loom.playlist.size >= 2, "pool resumed before any new render"
+        assert pipe.loom.last_frame is not None, "chain seeds from the newest clip"
+        assert party.state.get_manifest("main") is not None

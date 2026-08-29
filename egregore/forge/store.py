@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import shutil
 import uuid
@@ -37,6 +38,10 @@ CLIP_SUFFIX = ".mp4"
 #: Backends render into this subdirectory so the final move is a same-device
 #: rename rather than a copy.
 _INCOMING = ".incoming"
+#: Provenance of every stored clip, so a fresh process can pick the pool
+#: back up. Holds ids, durations, zones, backends and timestamps — never a
+#: prompt and never any text.
+_INDEX = "index.json"
 
 
 def _hash_file(path: Path) -> str:
@@ -76,6 +81,57 @@ class ClipStore:
         self.incoming_dir.mkdir(parents=True, exist_ok=True)
         self._index: dict[str, ClipRef] = {}
         self._lock = asyncio.Lock()
+        self._load_index()
+
+    # -- persistence ---------------------------------------------------------
+
+    @property
+    def index_path(self) -> Path:
+        return self.dir / _INDEX
+
+    def _load_index(self) -> None:
+        """Rebuild the in-memory index from the sidecar, dropping any entry
+        whose file is no longer there."""
+        try:
+            raw = json.loads(self.index_path.read_text())
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError) as exc:
+            log.warning("clip index unreadable (%s); starting empty", type(exc).__name__)
+            return
+        for entry in raw if isinstance(raw, list) else []:
+            try:
+                path = self.path_for(str(entry["id"]))
+                if not path.is_file():
+                    continue
+                self._index[str(entry["id"])] = ClipRef(
+                    id=str(entry["id"]),
+                    path=path,
+                    duration_s=float(entry["duration_s"]),
+                    zone=str(entry["zone"]),
+                    backend=str(entry["backend"]),
+                    tier=str(entry["tier"]),
+                    created_at=float(entry.get("created_at", 0.0)),
+                    movement_id=entry.get("movement_id"),
+                    chain_index=int(entry.get("chain_index", 0)),
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        if self._index:
+            log.info("clip store resumed clips=%d dir=%s", len(self._index), self.dir)
+
+    def _save_index(self) -> None:
+        rows = [
+            {
+                "id": r.id, "duration_s": r.duration_s, "zone": r.zone,
+                "backend": r.backend, "tier": r.tier, "created_at": r.created_at,
+                "movement_id": r.movement_id, "chain_index": r.chain_index,
+            }
+            for r in self._index.values()
+        ]
+        tmp = self.index_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(rows))
+        tmp.replace(self.index_path)
 
     # -- paths -------------------------------------------------------------
 
@@ -131,6 +187,7 @@ class ClipStore:
                 chain_index=chain_index,
             )
             self._index[clip_id] = ref
+            await asyncio.to_thread(self._save_index)
 
         # Content-blind: id, provenance and size only.
         log.info(
@@ -178,6 +235,7 @@ class ClipStore:
         for stray in self.incoming_dir.iterdir():
             if stray.is_file():
                 _unlink(stray)
+        _unlink(self.index_path)
 
         log.info("clip store wiped files=%d dir=%s", removed, self.dir)
         return removed

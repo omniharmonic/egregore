@@ -538,6 +538,22 @@ class ZonePipeline:
 
     # -- the generation loop ------------------------------------------------
 
+    async def resume(self, clips: list[ClipRef]) -> int:
+        """Pick up clips a previous run left in the store.
+
+        Oldest first, so the playlist's half-life weighting and the
+        continuity chain both end on the newest clip. Only the newest clip
+        pays for a last-frame extraction: the chain seeds from that one.
+        """
+        mine = sorted((c for c in clips if c.zone == self.zone), key=lambda c: c.created_at)
+        for c in mine[:-1]:
+            self.loom.playlist.add(c)
+        if mine:
+            await self.loom.ingest(mine[-1], mine[-1].path)
+            self.state.set_manifest(self.zone, self.loom.manifest())
+            log.info("zone %s: resumed %d clip(s) from the store", self.zone, len(mine))
+        return len(mine)
+
     async def run(self) -> None:
         if not self.shares_ring:
             await self.ring.start()
@@ -1056,6 +1072,7 @@ async def run_party(cfg: EgregoreConfig, *, ignore_settings: bool = False) -> No
     governor.start()
     forge.start()
     for p in pipelines.values():
+        await p.resume(store.all())
         await p.run()
 
     from egregore.banner import print_banner
