@@ -761,3 +761,68 @@ async def test_a_literal_setting_does_not_weaken_the_privacy_floor():
                   & word_ngrams(normalize_words(said), 3))
         assert not shared, f"leak at abstraction={abstraction}: {sorted(shared)[:2]}"
         assert "grandmother" not in result.prompt.lower()
+
+
+# ---------------------------------------------------------------------------
+# Candidates — one validated theme per stretch of speech
+# ---------------------------------------------------------------------------
+
+from dataclasses import dataclass as _dc  # noqa: E402
+
+from egregore.weaver import Candidate  # noqa: E402
+
+
+@_dc(frozen=True)
+class Seg:
+    text: str
+    started_at: float
+    ended_at: float
+    tokens: int
+
+
+def seg(text: str, t: float) -> Seg:
+    return Seg(text, t - 5, t, len(text.split()))
+
+
+async def test_weave_candidates_yields_one_theme_per_segment():
+    w = Weaver()
+    segs = [
+        seg("we drove out to the coast and the tide pools were glowing green", 100),
+        seg("the scheduler keeps timing out and the latency is terrible", 200),
+    ]
+    cands = await w.weave_candidates(segs)
+    assert len(cands) == 2
+    assert all(isinstance(c, Candidate) for c in cands)
+    assert cands[0].ended_at == 100 and cands[0].tokens == 13
+    assert not hasattr(cands[0], "text")
+
+
+async def test_weave_candidates_keeps_the_longest_when_capped():
+    w = Weaver()
+    segs = [
+        seg("short one", 1),
+        seg("this is a much longer stretch of talk about the ocean and its tides and light", 2),
+        seg("medium length talk about gears", 3),
+    ]
+    cands = await w.weave_candidates(segs, max_candidates=2)
+    assert sorted(c.tokens for c in cands) == [5, 16]
+
+
+async def test_weave_candidates_drops_a_rejected_theme_without_purging():
+    class Leaky:
+        async def abstract(self, text, mood=None, *, attempt=0):
+            # Copies a three-gram straight out of the text: the validator
+            # must reject it.
+            words = text.split()
+            return ThemeObject(motifs=[" ".join(words[:3])])
+
+    w = Weaver(Leaky())
+    before = w.purges_requested
+    cands = await w.weave_candidates([seg("one two three four five six", 1)])
+    assert cands == []
+    assert w.rejections == 1
+    assert w.purges_requested == before
+
+
+async def test_weave_candidates_of_nothing_is_nothing():
+    assert await Weaver().weave_candidates([]) == []

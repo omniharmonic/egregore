@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from egregore.types import MoodState, ThemeObject
 
 from .abstractor import AbstractionError, Abstractor, HeuristicAbstractor, fallback_theme
+from .select import Candidate
 from .synthesis import synthesize_prompt
 from .validator import ValidationResult, validate_theme
 
@@ -131,6 +132,43 @@ class Weaver:
             attempts=self.max_attempts,
             reasons=list(last.reasons) if last else ["stage1-error"],
         )
+
+    async def weave_candidates(
+        self,
+        segments,
+        *,
+        mood: MoodState | None = None,
+        max_candidates: int = 6,
+    ) -> list[Candidate]:
+        """One validated theme per stretch of speech, for the selector.
+
+        Each segment is abstracted and validated against *its own* text, so a
+        candidate can never carry a phrase from a neighbouring segment. A
+        rejected candidate is dropped and counted; it does not purge — purge
+        stays reserved for the whole-window path, which the caller falls back
+        to when nothing here survives.
+
+        Returns ``Candidate`` objects only: theme plus the shape of the speech
+        (token count, timestamps). No text leaves this method.
+        """
+        keep = sorted(segments, key=lambda s: s.tokens, reverse=True)
+        keep = keep[: max(1, int(max_candidates))]
+        keep.sort(key=lambda s: s.started_at)
+        out: list[Candidate] = []
+        for s in keep:
+            try:
+                theme = await self.abstractor.abstract(s.text, mood, attempt=0)
+            except AbstractionError:
+                log.warning("weaver candidate stage-1 failed")
+                continue
+            verdict = validate_theme(theme, s.text)
+            if not verdict.ok:
+                self.rejections += 1
+                log.warning("weaver candidate rejected", extra={"reasons": verdict.reasons})
+                continue
+            out.append(Candidate(theme=theme, tokens=int(s.tokens),
+                                 ended_at=float(s.ended_at), started_at=float(s.started_at)))
+        return out
 
     # -- internals --
 
