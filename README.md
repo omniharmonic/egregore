@@ -323,6 +323,14 @@ Bear in mind that the lens stack reprocesses every frame, so a good deal of the
 extra resolution is spent on detail the shaders then paint over. Start fast,
 and raise the settings only if the picture underneath the effects looks thin.
 
+### When a screen cannot keep up
+
+If a frame runs long, the screen lowers its internal render resolution in
+steps — a touch softer, same shaders — and raises it again when there is
+headroom. The look you chose stays the look. `?adapt=passes` on a screen's
+address restores the old behaviour of dropping effect passes instead, and
+`?adapt=off` never adapts.
+
 ### Lingering on a composition
 
 Two things decide how long anything stays on screen:

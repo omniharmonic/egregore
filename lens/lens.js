@@ -26,6 +26,11 @@ const q = new URLSearchParams(location.search);
 const ZONE = q.get('zone') || 'main';
 const SCREEN = q.get('screen') || '';
 const HUD_ON = q.get('hud') === '1';
+// What gives when a frame runs long. 'scale' lowers the internal render
+// resolution in steps — a touch softer, same shaders, so the look an operator
+// chose stays the look. 'passes' is the old behaviour of dropping lens
+// passes, which reads as effects popping in and out. 'off' never adapts.
+const ADAPT = (q.get('adapt') || 'scale').toLowerCase();
 const AUDIO_LOCAL = q.get('audio') === 'local';
 const CACHE_MB = Number(q.get('cache_mb'));
 const CACHE_BYTES = (isFinite(CACHE_MB) && CACHE_MB > 0) ? Math.max(64, CACHE_MB) * 1e6 : 1.5e9;
@@ -42,6 +47,7 @@ const el = {
 const state = {
   stack: DEFAULT_STACK.slice(),
   activePasses: DEFAULT_STACK.length,
+  renderScale: 1,
   phase: 0,
   crossfade: DEFAULT_CROSSFADE, crossfadePinned: false, playbackRate: 1, hold: 0,
   glOk: false, glLost: false,
@@ -381,8 +387,9 @@ window.addEventListener('offline', () => { if (deck) deck.offline = true; });
 
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const w = Math.max(2, Math.round(innerWidth * dpr));
-  const h = Math.max(2, Math.round(innerHeight * dpr));
+  const sc = state.renderScale || 1;
+  const w = Math.max(2, Math.round(innerWidth * dpr * sc));
+  const h = Math.max(2, Math.round(innerHeight * dpr * sc));
   if (el.canvas.width !== w || el.canvas.height !== h) {
     el.canvas.width = w; el.canvas.height = h;
   }
@@ -470,24 +477,48 @@ function drawFallback() {
   state.passes = 0;
 }
 
+const SCALE_STEPS = [1, 0.85, 0.7, 0.55, 0.4];
+
 function governPasses(now) {
-  if (!state.glOk || document.hidden || now < 2500) return;
+  if (!state.glOk || document.hidden || now < 2500 || ADAPT === 'off') return;
   if (state.emaMs > 24) {
     state.underBudgetSince = 0;
     if (!state.overBudgetSince) state.overBudgetSince = now;
-    else if (now - state.overBudgetSince > 3000 && state.activePasses > 0) {
-      state.activePasses--;
+    else if (now - state.overBudgetSince > 3000) {
       state.overBudgetSince = now;
-      console.warn(`[lens] VIS-7: frame ${state.emaMs.toFixed(1)}ms — dropping to ` +
-        `${state.activePasses} lens pass(es): [${state.stack.slice(0, state.activePasses).join(', ')}]`);
+      if (ADAPT === 'passes') {
+        if (state.activePasses > 0) {
+          state.activePasses--;
+          console.warn(`[lens] VIS-7: frame ${state.emaMs.toFixed(1)}ms — dropping to ` +
+            `${state.activePasses} lens pass(es): [${state.stack.slice(0, state.activePasses).join(', ')}]`);
+        }
+      } else {
+        const i = SCALE_STEPS.indexOf(state.renderScale);
+        if (i >= 0 && i < SCALE_STEPS.length - 1) {
+          state.renderScale = SCALE_STEPS[i + 1];
+          resize();
+          console.warn(`[lens] VIS-7: frame ${state.emaMs.toFixed(1)}ms — render scale ${state.renderScale}`);
+        }
+      }
     }
   } else if (state.emaMs < 12) {
     state.overBudgetSince = 0;
     if (!state.underBudgetSince) state.underBudgetSince = now;
-    else if (now - state.underBudgetSince > 30000 && state.activePasses < state.stack.length) {
-      state.activePasses++;
+    else if (now - state.underBudgetSince > 30000) {
       state.underBudgetSince = now;
-      console.info(`[lens] VIS-7: headroom — restoring lens pass ${state.activePasses}`);
+      if (ADAPT === 'passes') {
+        if (state.activePasses < state.stack.length) {
+          state.activePasses++;
+          console.info(`[lens] VIS-7: headroom — restoring lens pass ${state.activePasses}`);
+        }
+      } else {
+        const i = SCALE_STEPS.indexOf(state.renderScale);
+        if (i > 0) {
+          state.renderScale = SCALE_STEPS[i - 1];
+          resize();
+          console.info(`[lens] VIS-7: headroom — render scale ${state.renderScale}`);
+        }
+      }
     }
   } else {
     state.overBudgetSince = 0; state.underBudgetSince = 0;
@@ -521,7 +552,7 @@ function updateHud() {
   const under = state.underBudgetSince ? ((now - state.underBudgetSince) / 1000).toFixed(1) + 's' : '-';
   const text = boxed(`lens ${ZONE}${SCREEN ? '/' + SCREEN : ''}`, [
     `fps     ${state.fps.toFixed(1).padStart(5)}   frame ${state.emaMs.toFixed(1)}ms`,
-    `passes  ${String(state.passes).padStart(5)}   lens  ${state.activePasses}/${state.stack.length}`,
+    `passes  ${String(state.passes).padStart(5)}   lens  ${state.activePasses}/${state.stack.length}   scale ${state.renderScale}`,
     // Whole stack, with a bar at the governor's cut: an operator needs to see
     // which passes were shed, not just how many.
     `stack   ${state.stack.slice(0, state.activePasses).join('>') || '-'}` +
