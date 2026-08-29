@@ -371,6 +371,15 @@
       options: ['fast', 'balanced', 'high'],
       note: 'how hard the local GPU works per clip. on a laptop: fast ~90s, '
           + 'balanced ~2 min, high ~4.5 min. the two numbers below override it' },
+    { path: 'generation.local_stretch', label: 'local stretch', type: 'select',
+      options: ['1', '2', '3', '4'],
+      note: 'slow each local clip this many times with motion-interpolated frames. '
+          + '2 turns a 4s render into 8s of fluid slow motion; slow generated video '
+          + 'reads as richer, not poorer' },
+    { path: 'generation.local_boomerang', label: 'boomerang', type: 'select',
+      options: ['true', 'false'],
+      note: 'play each local clip forward then back, so it loops without a cut and '
+          + 'a continued clip match-cuts onto it' },
     { path: 'generation.local_steps',  label: 'local steps', type: 'number',
       min: 1, max: 100, step: 1, nullable: true,
       note: 'how hard the local GPU works per clip. fewer steps means video '

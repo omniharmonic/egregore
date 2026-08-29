@@ -146,6 +146,12 @@ class GenerationConfig(BaseModel):
     # two numbers below override the level field by field for anyone who
     # wants exact control; blank means "the level decides".
     local_quality: Literal["fast", "balanced", "high"] = "balanced"
+    # Post-render polish for local clips. stretch slows the clip that many
+    # times with motion-interpolated frames — slow generated video reads as
+    # richer, not poorer — and boomerang appends the reverse so it loops
+    # without a cut. A 4s render becomes a 16s breath for ~3s of CPU.
+    local_stretch: int = Field(2, ge=1, le=4)
+    local_boomerang: bool = True
     local_steps: int | None = Field(None, ge=1, le=100)
     local_resolution: str | None = None  # e.g. "512x320"
 

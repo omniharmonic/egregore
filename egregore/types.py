@@ -75,6 +75,7 @@ class ManifestEntry:
     duration_s: float
     weight: float  # sampling weight, already normalized upstream
     movement_id: str | None = None
+    chain_index: int = 0  # position within its movement; screens play them in order
 
 
 @dataclass

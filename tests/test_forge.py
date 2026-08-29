@@ -1753,3 +1753,30 @@ async def test_store_wipe_removes_the_index_too(tmp_path: Path) -> None:
     await store.put(src, duration_s=4.0, zone="main", backend="local", tier="fast")
     store.wipe()
     assert len(ClipStore(tmp_path / "clips")) == 0
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not on PATH")
+async def test_local_polish_stretches_and_boomerangs(tmp_path):
+    # A 4s local render becomes a longer, smoother, seamlessly looping clip
+    # for a few seconds of CPU: 2x motion-interpolated slow motion, then
+    # forward-and-back. The clip's last frame is its first, so a successor
+    # seeded from it match-cuts.
+    from egregore.forge.local import polish_clip
+    src = tmp_path / "in.mp4"
+    subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                    "-i", "testsrc=size=128x64:rate=24:duration=1", "-pix_fmt", "yuv420p", str(src)], check=True)
+    out = tmp_path / "out.mp4"
+    seconds = await polish_clip(src, out, stretch=2, boomerang=True)
+    assert out.is_file()
+    assert 3.6 <= seconds <= 4.4, seconds     # 1s -> 2s slow -> 4s boomerang
+    same = await polish_clip(src, tmp_path / "same.mp4", stretch=1, boomerang=False)
+    assert 0.9 <= same <= 1.1
+
+
+def test_local_stretch_and_boomerang_are_config_and_live():
+    from egregore.config import store as cfg_store
+    from egregore.config.schema import EgregoreConfig
+    cfg = EgregoreConfig()
+    assert cfg.generation.local_stretch == 2 and cfg.generation.local_boomerang is True
+    assert "generation.local_stretch" in cfg_store.LIVE_KEYS
+    assert "generation.local_boomerang" in cfg_store.LIVE_KEYS

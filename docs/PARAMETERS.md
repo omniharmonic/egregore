@@ -58,6 +58,8 @@ three weights need not sum to one.
 | `generation.backend` | `auto` | `local` (ComfyUI + LTX-Video), `fal`, `veo`, `procedural`, or `auto` (cloud while a budget lasts, then local, then procedural). **restart** |
 | `generation.fallback` | `procedural` | What renders when the backend cannot. `procedural` never lets the room go dark. **restart** |
 | `generation.local_quality` | `balanced` | How hard the local GPU works per clip. `fast` (8 steps, 512×320, ~90s on an Apple-silicon laptop), `balanced` (12 steps, 512×320, ~2 min), `high` (12 steps, 640×384, ~4.5 min). Resolution is the cost; steps are nearly free by comparison. A bigger GPU shifts all three. |
+| `generation.local_stretch` | 2 | Slow each local clip this many times with motion-interpolated frames. A 4s render becomes 8s of fluid slow motion; slow generated video reads as richer. ~1.5s of CPU per second of output. |
+| `generation.local_boomerang` | true | Play each local clip forward then back, so it loops without a cut and a continued clip match-cuts onto it. Doubles the length again: a 4s render becomes a 16s breath. |
 | `generation.local_steps` / `local_resolution` | none | Exact overrides of the level, field by field; blank means the level decides. Sizes are multiples of 32. |
 | `generation.comfyui_url` | `http://127.0.0.1:8188` | Where ComfyUI is. Point it at another machine to move the GPU work there. **restart** |
 | `generation.clip_duration_s` | 4 (local) / 6 (cloud) | Seconds per rendered clip. Local: what the model renders in time. Cloud models have their own allowed lengths and snap to the nearest. |
@@ -79,6 +81,7 @@ three weights need not sum to one.
 | `continuity.active_pool_max` | 200 (120 in `local`) | Clips kept in rotation before the oldest are archived. |
 | `zones[].playback_rate` (**speed**) | 0.7 | Below 1 the motion is languid and each clip holds the screen longer. |
 | `zones[].crossfade_s` (**crossfade**) | 4 | Seconds one clip takes to dissolve into the next. |
+| *(movements)* | — | In `continuity` mode a screen plays a movement's clips in order with a short match cut at each seeded seam, then lingers, then picks. Nothing to set; it follows from `chain_index` in the manifest. |
 | `zones[].hold_s` (**linger**) | 20 | The least wall time a composition stays up. A shorter clip dissolves into itself to get there. 0 = its own length. |
 
 ## The effects

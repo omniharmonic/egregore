@@ -25,7 +25,7 @@ from typing import Literal
 from egregore.config.schema import ContinuityConfig
 from egregore.loom.frames import extract_last_frame
 from egregore.loom.playlist import WeightedPlaylist
-from egregore.types import ClipRef, Manifest, ThemeObject
+from egregore.types import ClipRef, Manifest, ManifestEntry, ThemeObject
 
 logger = logging.getLogger(__name__)
 
@@ -327,9 +327,23 @@ class ZoneLoom:
 
     def manifest(self, revision: int = 0) -> Manifest:
         """The current playlist as a Manifest for the Conductor to serve."""
+        # The store never knew which movement a clip joined; the Loom does.
+        # Screens use this to play a movement in order and match-cut the
+        # seams continuity was built for.
+        position: dict[str, tuple[str, int]] = {}
+        for movement in self.movements:
+            for i, clip_id in enumerate(movement.clip_ids):
+                position[clip_id] = (movement.id, i)
+        entries = []
+        for e in self.playlist.entries():
+            if e.clip_id in position:
+                mid, idx = position[e.clip_id]
+                e = ManifestEntry(clip_id=e.clip_id, duration_s=e.duration_s, weight=e.weight,
+                                  movement_id=mid, chain_index=idx)
+            entries.append(e)
         return Manifest(
             zone=self.zone,
-            entries=self.playlist.entries(),
+            entries=entries,
             mode=self.mode,
             crossfade_s=self.crossfade_s,
             revision=revision,

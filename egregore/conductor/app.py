@@ -141,6 +141,7 @@ def _manifest_wire(manifest: Manifest) -> dict:
                 "duration_s": e.duration_s,
                 "weight": e.weight,
                 "movement_id": e.movement_id,
+                "chain_index": e.chain_index,
             }
             for e in manifest.entries
         ],

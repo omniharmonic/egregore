@@ -102,6 +102,8 @@ def build_ladder(cfg: EgregoreConfig, store: ClipStore) -> list[VideoBackend]:
                                               env="EGREGORE_COMFY_SEED_WORKFLOW"),
                 steps=resolve_local_effort(cfg.generation)[0],
                 resolution=resolve_local_effort(cfg.generation)[1],
+                stretch=cfg.generation.local_stretch,
+                boomerang=cfg.generation.local_boomerang,
             )
         )
     # The procedural renderer ("mock") is a real zero-cost backend, always last.
@@ -243,6 +245,8 @@ class LiveSettings:
     #: running — a restart would drop the clip pool and the chain with it.
     #: None on either leaves the graph's own value alone.
     local_quality: str = "balanced"
+    local_stretch: int = 2
+    local_boomerang: bool = True
     local_steps: int | None = None
     local_resolution: str | None = None
     #: The local rungs these knobs are pushed to. Populated by
@@ -286,6 +290,8 @@ class LiveSettings:
         for backend in self._local_backends:
             backend.steps = steps
             backend.resolution = size
+            backend.stretch = self.local_stretch
+            backend.boomerang = self.local_boomerang
 
     @classmethod
     def from_config(cls, cfg: EgregoreConfig) -> LiveSettings:
@@ -297,6 +303,8 @@ class LiveSettings:
             abstraction=cfg.aesthetic.abstraction,
             room_bias=cfg.aesthetic.room_bias,
             local_quality=cfg.generation.local_quality,
+            local_stretch=cfg.generation.local_stretch,
+            local_boomerang=cfg.generation.local_boomerang,
             local_steps=cfg.generation.local_steps,
             local_resolution=cfg.generation.local_resolution,
             fallback_after_s=cfg.weaver.fallback_after_s,
@@ -326,6 +334,12 @@ class LiveSettings:
         if "fill_duration_s" in gen:
             self.fill_duration_s = int(gen["fill_duration_s"])
             changed.append("generation.fill_duration_s")
+        if "local_stretch" in gen:
+            self.local_stretch = max(1, min(4, int(gen["local_stretch"] or 1)))
+            changed.append("generation.local_stretch")
+        if "local_boomerang" in gen:
+            self.local_boomerang = bool(gen["local_boomerang"])
+            changed.append("generation.local_boomerang")
         if "local_quality" in gen:
             level = str(gen["local_quality"])
             if level in LOCAL_QUALITY:
@@ -339,7 +353,8 @@ class LiveSettings:
             raw = gen["local_resolution"]
             self.local_resolution = str(raw) if raw not in (None, "") else None
             changed.append("generation.local_resolution")
-        if any(k in gen for k in ("local_quality", "local_steps", "local_resolution")):
+        if any(k in gen for k in ("local_quality", "local_steps", "local_resolution",
+                                  "local_stretch", "local_boomerang")):
             self._push_hardware()
         weaver_over = overrides.get("weaver") or {}
         if "fallback_after_s" in weaver_over:

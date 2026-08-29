@@ -821,3 +821,17 @@ def test_now_playing_carries_how_long_and_reaches_the_zones_api(cfg_home):
                 _t.sleep(0.05)
         np = client.get("/api/zones").json()["zones"]["main"]["now_playing"]
         assert np["wall"]["clip_id"] == "abc" and np["wall"]["shown_s"] == 812.5
+
+
+async def test_manifest_route_carries_chain_position(tmp_path):
+    from egregore.types import Manifest, ManifestEntry
+    state, _ = make_state(tmp_path)
+    app = make_app(tmp_path, state)
+    state.set_manifest("main", Manifest(zone="main", mode="continuity", entries=[
+        ManifestEntry(clip_id="a", duration_s=4.0, weight=0.5, movement_id="m1", chain_index=0),
+        ManifestEntry(clip_id="b", duration_s=4.0, weight=0.5, movement_id="m1", chain_index=1),
+    ]))
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        body = (await client.get("/api/manifest", params={"zone": "main"})).json()
+    assert [e["chain_index"] for e in body["entries"]] == [0, 1]

@@ -435,3 +435,20 @@ def test_an_unknown_backend_keeps_full_weight():
                    zone="main", backend="some-new-vendor", tier="x",
                    created_at=1000.0)
     assert pl.backend_weight(clip) == 1.0
+
+
+@pytest.mark.skipif(not HAVE_FFMPEG, reason="ffmpeg not on PATH")
+async def test_manifest_tells_screens_which_clips_form_a_movement(tmp_path: Path):
+    # The Loom seeds clip N+1 from clip N's last frame, but the store never
+    # knew which movement a clip belonged to, so the manifest said nothing
+    # and the deck picked at random: the seam continuity was built for was
+    # never shown. The manifest now carries movement and position.
+    clip_path = _make_fixture_clip(tmp_path)
+    loom = ZoneLoom("main", "continuity", max_chain_length=3, clock=lambda: 0.0)
+    for i in range(3):
+        loom.plan_next()
+        await loom.ingest(make_clip(f"c{i}", created_at=0.0), clip_path)
+    by_id = {e.clip_id: e for e in loom.manifest().entries}
+    assert by_id["c0"].movement_id == by_id["c1"].movement_id == by_id["c2"].movement_id
+    assert by_id["c0"].movement_id is not None
+    assert [by_id[f"c{i}"].chain_index for i in range(3)] == [0, 1, 2]

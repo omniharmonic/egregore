@@ -163,6 +163,7 @@ export class Playlist {
       duration_s: Number(e.duration_s) > 0 ? Number(e.duration_s) : 8,
       weight: Number(e.weight) > 0 ? Number(e.weight) : 1,
       movement_id: e.movement_id != null ? String(e.movement_id) : null,
+      chain_index: Number.isFinite(Number(e.chain_index)) ? Number(e.chain_index) : 0,
     }));
     if (!entries.length) return false;
     if (!this.crossfadePinned && typeof m.crossfade_s === 'number' && m.crossfade_s > 0) {
@@ -176,6 +177,17 @@ export class Playlist {
     this.revision = typeof m.revision === 'number' ? m.revision : this.revision + 1;
     this.ok = true;
     return true;
+  }
+
+  /**
+   * The clip that continues `entry` in its movement, if the pool has it.
+   * Continuity seeds clip N+1 from clip N's last frame; playing them in
+   * order is the whole point, and a random pick threw that away.
+   */
+  successor(entry) {
+    if (!entry || !entry.movement_id) return null;
+    const want = (entry.chain_index || 0) + 1;
+    return this.entries.find((e) => e.movement_id === entry.movement_id && e.chain_index === want) || null;
   }
 
   /** Weighted pick, avoiding an immediate repeat once the pool is big enough. */
@@ -232,6 +244,7 @@ export class Deck {
     this._shownAt = 0;
     this._pendingAt = 0;
     this.watchdogTrips = 0;
+    this._matchCut = false;
 
     for (let i = 0; i < 2; i++) {
       const el = this.v[i];
@@ -295,9 +308,17 @@ export class Deck {
     return (performance.now() - this._shownAt) / 1000 >= hold;
   }
 
-  /** The next entry: the same clip again while it still has to linger. */
+  /**
+   * The next entry. A movement plays through in order — the continuation of
+   * the clip on screen is the same composition, so linger does not apply —
+   * then linger, then a weighted pick.
+   */
   _next() {
-    if (!this._heldEnough() && this._entry[this.active]) return this._entry[this.active];
+    const cur = this._entry[this.active];
+    const next = this.pl.successor(cur);
+    if (next) { this._matchCut = true; return next; }
+    this._matchCut = false;
+    if (!this._heldEnough() && cur) return cur;
     return this.pl.pick();
   }
 
@@ -392,7 +413,10 @@ export class Deck {
 
     const a = this.active, b = 1 - this.active;
     const cur = this.v[a];
-    const xf = this.crossfade;
+    // A seeded successor starts on the frame this clip ends on: a short
+    // dissolve right at the tail reads as one continuous shot, where the
+    // usual long crossfade would overlap frames that do not match.
+    const xf = this._matchCut ? Math.min(0.8, this.crossfade) : this.crossfade;
 
     if (this.fading) {
       const dir = b === 1 ? 1 : -1;

@@ -7,7 +7,8 @@ final report instead of changing it.
 
 > Additive extensions on 2026-08-28: `GenerationConfig.local_steps/local_resolution`
 > and `SelectionConfig` (+`WeaverConfig.selection`, `ZoneConfig.selection`,
-> `EgregoreConfig.zone_selection()`). Nothing existing changed shape.
+> `EgregoreConfig.zone_selection()`), `ManifestEntry.chain_index`,
+> `GenerationConfig.local_stretch/local_boomerang`. Nothing existing changed shape.
 
 Source documents: `docs/egregore-01-prd.md`, `docs/egregore-02-architecture.md`,
 `docs/egregore-03-implementation-plan.md`. Architecture §2 defines each module.

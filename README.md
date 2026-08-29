@@ -131,7 +131,11 @@ the material. `budget.total_usd` is a hard ceiling for cloud spend; at zero,
 no cloud call is even possible.
 
 **The loop.** Clips join a weighted playlist; in `continuity` mode each one
-grows out of the last one's final frame. On each screen, **speed** slows the
+grows out of the last one's final frame, and a screen plays a movement
+through in order with a short match cut at each seam. Local renders are
+polished after the fact — **stretch** slows them with motion-interpolated
+frames and **boomerang** plays them forward then back — so a 4-second render
+becomes a 16-second seamless breath for three seconds of CPU. On each screen, **speed** slows the
 motion, **crossfade** is how long one clip dissolves into the next, and
 **linger** is the least time a composition stays up — a short clip dissolves
 into itself rather than cutting away.
