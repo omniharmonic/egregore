@@ -181,21 +181,6 @@
 
 <div class="panels">
 
-  <section class="panel">
-    <h2>keys</h2>
-    <p class="hint" id="keysHint">&nbsp;</p>
-    <div id="secrets"></div>
-  </section>
-
-  <section class="panel">
-    <h2>generation</h2>
-    <p class="hint">
-      <span class="tag live">live</span> applies to the next clip ·
-      <span class="tag restart">restart</span> applies on the next run
-    </p>
-    <div id="settings"></div>
-  </section>
-
   <section class="panel" style="flex-basis: 100%;">
     <h2>look</h2>
     <p class="hint">
@@ -217,6 +202,25 @@
       <span class="flash" id="grammarFlash">applied</span>
       <span class="bad" id="grammarErr"></span>
     </div>
+  </section>
+
+  <section class="panel" style="flex-basis: 100%;">
+    <h2>zones and screens</h2>
+    <p class="hint">
+      Effects and audio routing reach the screens immediately — no reload, no
+      restart. The microphone is opened once at start-up, so changing it needs
+      a restart and is set in the preset.
+    </p>
+    <div id="zones"></div>
+  </section>
+
+  <section class="panel">
+    <h2>generation</h2>
+    <p class="hint">
+      <span class="tag live">live</span> applies to the next clip ·
+      <span class="tag restart">restart</span> applies on the next run
+    </p>
+    <div id="settings"></div>
   </section>
 
   <section class="panel" style="flex-basis: 100%;">
@@ -242,14 +246,10 @@
     </table>
   </section>
 
-  <section class="panel" style="flex-basis: 100%;">
-    <h2>zones and screens</h2>
-    <p class="hint">
-      Effects and audio routing reach the screens immediately — no reload, no
-      restart. The microphone is opened once at start-up, so changing it needs
-      a restart and is set in the preset.
-    </p>
-    <div id="zones"></div>
+  <section class="panel">
+    <h2>keys</h2>
+    <p class="hint" id="keysHint">&nbsp;</p>
+    <div id="secrets"></div>
   </section>
 
   <section class="panel" style="flex-basis: 100%;">
