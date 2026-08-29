@@ -48,7 +48,11 @@ class WeaverLLMConfig(BaseModel):
     """
 
     base_url: str | None = None  # e.g. "http://localhost:11434/v1"
-    model: str = "qwen3:14b"
+    # With no base_url, look for LM Studio (:1234) and Ollama (:11434) on this
+    # machine and use the first chat model they offer. The LLM is the biggest
+    # lever on whether the wall feels like the conversation.
+    autodetect: bool = True
+    model: str = "qwen3:14b"  # used if the server lists it; else its first chat model
     api_key_env: str = "EGREGORE_LLM_API_KEY"  # most local servers need none
 
 
@@ -88,6 +92,10 @@ class WeaverConfig(BaseModel):
     # prompt is the right thing for a long lull, not for the first two
     # minutes of a party while people are still arriving.
     fallback_after_s: float = Field(120.0, ge=0.0, le=3600.0)
+    # How long a render may wait on stage 1 for a thought that was not
+    # already abstracted in the background. Past this the heuristic stands
+    # in, so a slow LLM costs quality on that one thought, never lag.
+    stage1_budget_s: float = Field(10.0, ge=0.5, le=120.0)
 
 
 class GenerationConfig(BaseModel):

@@ -23,6 +23,7 @@ after the call returns.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from collections.abc import Callable
@@ -33,6 +34,8 @@ from egregore.config.schema import WeaverConfig
 from egregore.types import MoodState, ThemeObject
 
 from .validator import char_runs, normalize_words, word_ngrams
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "Abstractor",
@@ -551,6 +554,18 @@ STAGE1_SYSTEM_PROMPT = (
     f"register is one of: {', '.join(REGISTERS)}."
 )
 
+# What stage 1 is asked for depends on how literal the party wants to be.
+# The privacy rules above are unchanged either way — the validator is the
+# gate — but at low abstraction the motifs should be things a viewer could
+# picture, or nothing on the wall will feel like the conversation.
+_CONCRETE_NUDGE = (
+    " For this room, motifs should be CONCRETE and recognisable visual subjects "
+    "in your own words — objects, materials, weather, light, kinds of place — "
+    "that a viewer could picture (for example 'glowing tide pools', 'copper pans "
+    "over a stove', 'rain on a taxi roof'). Still never a name, a quote, or a "
+    "phrase copied from the input."
+)
+
 _ATTEMPT_NUDGE = (
     " Your previous attempt was rejected as insufficiently abstract. "
     "Use entirely different, more generic wording."
@@ -663,6 +678,9 @@ class LLMAbstractor:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self._client = client
+        #: How literal the party wants to be. Set by the Weaver; at 0.5 and
+        #: below stage 1 is asked for concrete, recognisable subjects.
+        self.abstraction = 1.0
         if not self.base_url or not self.model:
             raise ValueError(
                 "LLMAbstractor needs a base_url and model "
@@ -675,8 +693,15 @@ class LLMAbstractor:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
-    def _payload(self, window_text: str, mood: MoodState | None, attempt: int) -> dict[str, Any]:
-        system = STAGE1_SYSTEM_PROMPT + (_ATTEMPT_NUDGE if attempt else "")
+    def _payload(
+        self, window_text: str, mood: MoodState | None, attempt: int,
+        abstraction: float | None = None,
+    ) -> dict[str, Any]:
+        system = STAGE1_SYSTEM_PROMPT
+        if (self.abstraction if abstraction is None else abstraction) <= 0.5:
+            system += _CONCRETE_NUDGE
+        if attempt:
+            system += _ATTEMPT_NUDGE
         user = window_text
         if mood is not None:
             user = (
@@ -700,11 +725,12 @@ class LLMAbstractor:
         mood: MoodState | None = None,
         *,
         attempt: int = 0,
+        abstraction: float | None = None,
     ) -> ThemeObject:
         import httpx
 
         url = f"{self.base_url}/chat/completions"
-        payload = self._payload(window_text, mood, attempt)
+        payload = self._payload(window_text, mood, attempt, abstraction)
         try:
             if self._client is not None:
                 response = await self._client.post(url, json=payload, headers=self._headers())
@@ -728,24 +754,79 @@ class LLMAbstractor:
         return theme_from_payload(_extract_first_json_object(content))
 
 
-def build_abstractor(config: WeaverConfig | None = None, **kwargs: Any) -> Abstractor:
+#: Where local LLM servers usually answer. Tried in order when no endpoint
+#: is configured: LM Studio, then Ollama.
+LOCAL_LLM_CANDIDATES: tuple[str, ...] = (
+    "http://127.0.0.1:1234/v1",
+    "http://127.0.0.1:11434/v1",
+)
+
+#: Models a local server may list that are not chat models.
+_NOT_CHAT = ("embed", "embedding", "ltx", "video", "whisper", "tts", "rerank", "clip")
+
+
+def probe_llm_server(base_url: str, timeout: float = 1.5) -> list[str] | None:
+    """Model ids a local OpenAI-compatible server offers, or None if silent."""
+    import httpx
+
+    try:
+        r = httpx.get(f"{base_url.rstrip('/')}/models", timeout=timeout)
+        r.raise_for_status()
+        rows = r.json().get("data") or []
+        return [str(m.get("id")) for m in rows if m.get("id")]
+    except Exception:  # noqa: BLE001 - any failure means "not here"
+        return None
+
+
+def _pick_chat_model(models: list[str], preferred: str | None) -> str | None:
+    if preferred and preferred in models:
+        return preferred
+    for m in models:
+        if not any(tag in m.lower() for tag in _NOT_CHAT):
+            return m
+    return None
+
+
+def build_abstractor(
+    config: WeaverConfig | None = None,
+    *,
+    probe: Callable[[str], list[str] | None] | None = None,
+    **kwargs: Any,
+) -> Abstractor:
     """Pick a stage-1 brain from party config.
 
-    ``engine: auto`` uses the LLM when an endpoint is configured and falls back
-    to the deterministic heuristic otherwise — the pipeline never *depends* on
-    an LLM being present (config docstring, Architecture §2.4 demo mode).
+    ``engine: auto`` uses an LLM when one is configured *or* when a local
+    server answers on a well-known port (LM Studio, Ollama), and falls back to
+    the deterministic heuristic otherwise — the pipeline never *depends* on an
+    LLM being present. The LLM is the single biggest lever on whether the
+    wall feels like the conversation; the heuristic has a fixed vocabulary.
     """
     config = config or WeaverConfig()
     if config.engine == "heuristic":
         return HeuristicAbstractor()
     base_url = config.llm.base_url
+    model = config.llm.model
+    # EGREGORE_LLM_AUTODETECT=0 pins the heuristic regardless of what is
+    # listening on this machine — for tests, and for an operator who wants it.
+    env_ok = os.environ.get("EGREGORE_LLM_AUTODETECT", "1") != "0"
+    if not base_url and config.llm.autodetect and env_ok and config.engine == "auto":
+        probe = probe or probe_llm_server
+        for candidate in LOCAL_LLM_CANDIDATES:
+            models = probe(candidate)
+            if not models:
+                continue
+            chosen = _pick_chat_model(models, model)
+            if chosen:
+                base_url, model = candidate, chosen
+                log.info("weaver: found a local LLM server at %s, using %s", base_url, model)
+                break
     if not base_url:
         if config.engine == "llm":
             raise ValueError("weaver.engine is 'llm' but weaver.llm.base_url is unset")
         return HeuristicAbstractor()
     return LLMAbstractor(
         base_url=base_url,
-        model=config.llm.model,
+        model=model,
         api_key=os.environ.get(config.llm.api_key_env),
         **kwargs,
     )

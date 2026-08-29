@@ -861,3 +861,124 @@ async def test_identical_themes_merge_and_their_words_add_up():
     tide = next(c for c in cands if "tide" in " ".join(c.theme.motifs).lower() or "depth" in " ".join(c.theme.motifs).lower())
     assert tide.tokens == 10 + 9, "merged candidate carries both segments' words"
     assert tide.ended_at == 2 and tide.started_at == 1 - 5
+
+
+# ---------------------------------------------------------------------------
+# Background abstraction — the render never waits on the LLM
+# ---------------------------------------------------------------------------
+
+import asyncio as _asyncio  # noqa: E402
+
+
+class SlowCounting:
+    """An abstractor that takes a while and counts its calls, so a test can
+    tell what was cached from what was computed."""
+
+    name = "slow"
+
+    def __init__(self, delay: float = 0.05):
+        self.delay = delay
+        self.calls = 0
+        self.abstraction = 1.0
+        self.seen_abstraction: list[float] = []
+
+    async def abstract(self, text, mood=None, *, attempt=0):
+        self.calls += 1
+        self.seen_abstraction.append(self.abstraction)
+        await _asyncio.sleep(self.delay)
+        words = text.split()
+        return ThemeObject(motifs=[f"theme of {len(words)} words"], elemental=["salt"])
+
+
+async def test_prime_abstracts_closed_segments_in_the_background():
+    slow = SlowCounting()
+    w = Weaver(slow)
+    segs = [seg("the tide pools were glowing green tonight", 10),
+            seg("gears and pressure and copper", 20),
+            seg("still being said right now", 30)]        # open: may still grow
+    w.prime(segs)
+    await w.drain(timeout=2.0)
+    assert slow.calls == 2, "the open segment is not abstracted until it closes"
+    assert w.cached(segs[0]) is not None and w.cached(segs[2]) is None
+
+
+async def test_weave_candidates_uses_the_cache_and_does_not_recompute():
+    slow = SlowCounting()
+    w = Weaver(slow)
+    segs = [seg("the tide pools were glowing green tonight", 10),
+            seg("gears and pressure and copper", 20),
+            seg("still being said right now, this very thought", 30)]
+    w.prime(segs)
+    await w.drain(timeout=2.0)
+    before = slow.calls
+    cands = await w.weave_candidates(segs)
+    assert len(cands) == 3
+    assert slow.calls == before + 1, "only the open segment needed a fresh call"
+
+
+async def test_an_uncached_slow_abstraction_falls_back_within_budget():
+    slow = SlowCounting(delay=5.0)
+    w = Weaver(slow, stage1_budget_s=0.1)
+    cands = await w.weave_candidates([seg("the tide pools were glowing green under the kelp", 10)])
+    assert len(cands) == 1
+    assert "words" not in " ".join(cands[0].theme.motifs), "heuristic stood in for the slow brain"
+
+
+async def test_abstraction_level_reaches_stage_one():
+    slow = SlowCounting()
+    w = Weaver(slow)
+    w.abstraction = 0.2
+    await w.weave_candidates([seg("the tide pools were glowing green under the kelp", 10)])
+    assert slow.seen_abstraction[-1] == 0.2
+
+
+async def test_llm_stage_one_asks_for_concrete_subjects_at_low_abstraction():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = request.read().decode()
+        return completion(
+            '{"motifs": ["glowing tide pools"], "register": "contemplative", '
+            '"valence": 0.5, "intensity": 0.4, "movement": "slow", "elemental": ["water"]}'
+        )
+
+    async with llm_client(handler) as client:
+        a = LLMAbstractor(base_url="http://x/v1", model="m", client=client)
+        await a.abstract("we drove to the coast and the tide pools glowed", abstraction=0.2)
+        assert "recognisable" in captured["body"].lower() or "concrete" in captured["body"].lower()
+        await a.abstract("we drove to the coast and the tide pools glowed", abstraction=0.9)
+        assert "concrete" not in captured["body"].lower()
+
+
+def test_build_abstractor_autodetects_a_local_llm_server(monkeypatch):
+    monkeypatch.setenv("EGREGORE_LLM_AUTODETECT", "1")
+    from egregore.config.schema import WeaverConfig
+    from egregore.weaver.abstractor import build_abstractor
+
+    def probe(base_url: str) -> list[str] | None:
+        if "1234" in base_url:
+            return ["text-embedding-nomic", "ltx-video", "qwen/qwen3.8-27b"]
+        return None
+
+    a = build_abstractor(WeaverConfig(), probe=probe)
+    assert isinstance(a, LLMAbstractor)
+    assert a.model == "qwen/qwen3.8-27b", "skips embedding and video models"
+    assert "1234" in a.base_url
+
+
+def test_build_abstractor_stays_heuristic_when_nothing_answers():
+    from egregore.config.schema import WeaverConfig
+    from egregore.weaver.abstractor import build_abstractor
+
+    a = build_abstractor(WeaverConfig(), probe=lambda url: None)
+    assert isinstance(a, HeuristicAbstractor)
+
+
+def test_build_abstractor_prefers_the_configured_model_when_listed(monkeypatch):
+    monkeypatch.setenv("EGREGORE_LLM_AUTODETECT", "1")
+    from egregore.config.schema import WeaverConfig
+    from egregore.weaver.abstractor import build_abstractor
+
+    cfg = WeaverConfig.model_validate({"llm": {"model": "small-one"}})
+    a = build_abstractor(cfg, probe=lambda url: ["big-one", "small-one"] if "1234" in url else None)
+    assert a.model == "small-one"

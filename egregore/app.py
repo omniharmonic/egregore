@@ -427,7 +427,9 @@ class ZonePipeline:
         self.ring = ring if ring is not None else RingBuffer.from_config(
             self.zone, cfg.privacy
         )
-        self.weaver = Weaver(build_abstractor(cfg.weaver))
+        self.weaver = Weaver(
+            build_abstractor(cfg.weaver), stage1_budget_s=cfg.weaver.stage1_budget_s,
+        )
         self.mood = MoodIntegrator()
         self.loom = ZoneLoom.from_config(
             self.zone, cfg.zone_mode(self.zone), cfg.continuity
@@ -514,6 +516,19 @@ class ZonePipeline:
     async def _on_speech_text(self, text: str) -> None:
         if not self.muted:
             self.ring.add(text)
+            self._prime()
+
+    def _prime(self) -> None:
+        """Work out the themes of closed thoughts while the GPU is busy, so
+        the next render slot finds them ready instead of waiting on stage 1."""
+        try:
+            self.weaver.abstraction = self.live.abstraction
+            self.weaver.prime(
+                self.ring.segments(self.live.selection_for(self.zone).segment_gap_s),
+                self.mood.state(),
+            )
+        except Exception:  # noqa: BLE001 - priming is an optimisation, never a failure
+            log.exception("zone %s: prime failed", self.zone)
 
     async def _on_speech_audio(self, pcm: bytes, sample_rate: int) -> None:
         if self.muted:
@@ -533,6 +548,7 @@ class ZonePipeline:
             self.discarded_fragments += 1
             return
         self.ring.add(text)
+        self._prime()
 
     def _publish_input_device(self) -> str | None:
         """The device this zone actually opened, once it has one.
@@ -608,6 +624,7 @@ class ZonePipeline:
                 if spaced and busy:
                     self.waited_for_slot += 1
                 sel_cfg = self.live.selection_for(self.zone)
+                self.weaver.abstraction = self.live.abstraction
                 segments = self.ring.segments(sel_cfg.segment_gap_s)
                 window_tokens = sum(s.tokens for s in segments)
                 borrowed: ThemeObject | None = None
@@ -822,6 +839,7 @@ class ZonePipeline:
             self.ring.zero()
 
     async def close(self) -> None:
+        await self.weaver.close()
         if self._source is not None:
             self._source.stop()
         for t in self._tasks:

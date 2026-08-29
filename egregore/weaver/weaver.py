@@ -18,6 +18,9 @@ It never logs window text, theme fields, or the synthesized prompt.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import hashlib
 import logging
 from dataclasses import dataclass, field
 
@@ -66,10 +69,27 @@ class Weaver:
         *,
         min_window_tokens: int = MIN_WINDOW_TOKENS,
         max_attempts: int = 2,
+        stage1_budget_s: float = 10.0,
+        cache_size: int = 64,
     ) -> None:
         self.abstractor: Abstractor = abstractor or HeuristicAbstractor()
         self.min_window_tokens = min_window_tokens
         self.max_attempts = max(1, max_attempts)
+        #: How literal the party wants to be; steers an LLM's stage 1.
+        self.abstraction = 1.0
+        #: How long a render may wait on stage 1 for an uncached thought
+        #: before the heuristic stands in.
+        self.stage1_budget_s = float(stage1_budget_s)
+        # Background abstraction. A closed stretch of speech is stable, so
+        # its theme can be worked out while the GPU is busy and be ready the
+        # instant a render slot opens. Keys are digests, never text.
+        self._cache: dict[str, ThemeObject | None] = {}
+        self._cache_order: list[str] = []
+        self._cache_size = int(cache_size)
+        self._queue: list[tuple[str, str, MoodState | None]] = []
+        self._pending: set[str] = set()
+        self._worker: asyncio.Task | None = None
+        self._heuristic = HeuristicAbstractor()
         # Counters are content-blind and safe to surface in ZoneStatus.
         self.cycles = 0
         self.prompts_synthesized = 0
@@ -97,9 +117,8 @@ class Weaver:
         last: ValidationResult | None = None
         for attempt in range(1, self.max_attempts + 1):
             try:
-                theme = await self.abstractor.abstract(
-                    window_text, mood, attempt=attempt - 1
-                )
+                self._steer()
+                theme = await self.abstractor.abstract(window_text, mood, attempt=attempt - 1)
             except AbstractionError:
                 log.warning("weaver stage-1 failed", extra={"attempt": attempt})
                 continue
@@ -140,6 +159,99 @@ class Weaver:
             reasons=list(last.reasons) if last else ["stage1-error"],
         )
 
+    # -- background abstraction ----------------------------------------------
+
+    def _steer(self) -> None:
+        """Tell a brain that can be steered how literal to be. The protocol
+        stays as it was; a brain without the attribute is simply not steered."""
+        if hasattr(self.abstractor, "abstraction"):
+            self.abstractor.abstraction = self.abstraction
+
+    @staticmethod
+    def _key(text: str) -> str:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:24]
+
+    def cached(self, segment) -> ThemeObject | None:
+        """The validated theme for a segment, if it has been worked out."""
+        return self._cache.get(self._key(segment.text))
+
+    def prime(self, segments, mood: MoodState | None = None) -> int:
+        """Queue every *closed* segment for background abstraction.
+
+        The last segment may still grow as the room keeps talking, so it is
+        left for the moment a render actually needs it. Newest first, so a
+        slow brain spends its time on what the next clip is likeliest to be
+        about. Returns how many were queued.
+        """
+        closed = list(segments)[:-1]
+        queued = 0
+        for s in reversed(closed):
+            k = self._key(s.text)
+            if k in self._cache or k in self._pending:
+                continue
+            self._pending.add(k)
+            self._queue.append((k, s.text, mood))
+            queued += 1
+        if queued and (self._worker is None or self._worker.done()):
+            self._worker = asyncio.create_task(self._work())
+        return queued
+
+    async def drain(self, timeout: float = 30.0) -> None:
+        """Wait for the background queue to empty (tests and shutdown)."""
+        if self._worker is not None:
+            with contextlib.suppress(asyncio.TimeoutError, asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(self._worker), timeout)
+
+    async def close(self) -> None:
+        if self._worker is not None:
+            self._worker.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._worker
+
+    async def _work(self) -> None:
+        while self._queue:
+            k, text, mood = self._queue.pop()      # newest first
+            theme: ThemeObject | None = None
+            try:
+                self._steer()
+                candidate = await self.abstractor.abstract(text, mood, attempt=0)
+                if validate_theme(candidate, text).ok:
+                    theme = candidate
+                else:
+                    self.rejections += 1
+            except AbstractionError:
+                log.warning("weaver background stage-1 failed")
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - a broken brain must not kill the worker
+                log.exception("weaver background stage-1 error")
+            self._remember(k, theme)
+            self._pending.discard(k)
+
+    def _remember(self, k: str, theme: ThemeObject | None) -> None:
+        self._cache[k] = theme
+        self._cache_order.append(k)
+        while len(self._cache_order) > self._cache_size:
+            old = self._cache_order.pop(0)
+            self._cache.pop(old, None)
+
+    async def _abstract_within_budget(self, text: str, mood: MoodState | None) -> ThemeObject:
+        """Stage 1 for a thought no one worked out in advance.
+
+        Bounded, so a slow LLM costs quality on this one thought rather than
+        lag on the whole wall: past the budget the heuristic answers instead.
+        """
+        self._steer()
+        try:
+            return await asyncio.wait_for(
+                self.abstractor.abstract(text, mood, attempt=0),
+                timeout=self.stage1_budget_s,
+            )
+        except TimeoutError:
+            log.warning("weaver stage-1 over budget (%.0fs); heuristic stands in",
+                        self.stage1_budget_s)
+            return await self._heuristic.abstract(text, mood, attempt=0)
+
     async def weave_candidates(
         self,
         segments,
@@ -163,16 +275,24 @@ class Weaver:
         keep.sort(key=lambda s: s.started_at)
         out: list[Candidate] = []
         for s in keep:
-            try:
-                theme = await self.abstractor.abstract(s.text, mood, attempt=0)
-            except AbstractionError:
-                log.warning("weaver candidate stage-1 failed")
-                continue
-            verdict = validate_theme(theme, s.text)
-            if not verdict.ok:
-                self.rejections += 1
-                log.warning("weaver candidate rejected", extra={"reasons": verdict.reasons})
-                continue
+            k = self._key(s.text)
+            if k in self._cache:
+                theme = self._cache[k]
+                if theme is None:
+                    continue                       # rejected in the background
+            else:
+                try:
+                    theme = await self._abstract_within_budget(s.text, mood)
+                except AbstractionError:
+                    log.warning("weaver candidate stage-1 failed")
+                    continue
+                verdict = validate_theme(theme, s.text)
+                if not verdict.ok:
+                    self.rejections += 1
+                    log.warning("weaver candidate rejected", extra={"reasons": verdict.reasons})
+                    self._remember(k, None)
+                    continue
+                self._remember(k, theme)
             out.append(Candidate(theme=theme, tokens=int(s.tokens),
                                  ended_at=float(s.ended_at), started_at=float(s.started_at)))
         return _consolidate(out)
