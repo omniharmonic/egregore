@@ -219,8 +219,11 @@ class Weaver:
                     theme = candidate
                 else:
                     self.rejections += 1
-            except AbstractionError:
-                log.warning("weaver background stage-1 failed")
+            except AbstractionError as exc:
+                # The message is content-free by construction (endpoint
+                # error class or parse failure), so it is safe to log and is
+                # the only way to tell a timeout from a bad reply.
+                log.warning("weaver background stage-1 failed: %s", exc)
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001 - a broken brain must not kill the worker
