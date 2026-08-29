@@ -806,3 +806,18 @@ def test_a_screen_reports_what_it_is_playing(tmp_path):
         assert state.now_playing["main"]["screen-1"]["clip_id"] == "abc123"
         body = client.get("/api/status").json()
         assert body["now_playing"]["main"]["screen-1"]["clip_id"] == "abc123"
+
+
+def test_now_playing_carries_how_long_and_reaches_the_zones_api(cfg_home):
+    state = _zoned_state()
+    app = create_app(state, lens_dir=_LENS, password="pw")
+    with TestClient(app) as client:
+        client.post("/api/join", json={"password": "pw"})
+        with client.websocket_connect("/ws/manifest?zone=main") as ws:
+            ws.send_json({"type": "playing", "screen": "wall", "clip_id": "abc", "shown_s": 812.5})
+            import time as _t
+            deadline = _t.monotonic() + 2
+            while _t.monotonic() < deadline and not state.now_playing.get("main"):
+                _t.sleep(0.05)
+        np = client.get("/api/zones").json()["zones"]["main"]["now_playing"]
+        assert np["wall"]["clip_id"] == "abc" and np["wall"]["shown_s"] == 812.5

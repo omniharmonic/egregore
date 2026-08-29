@@ -160,8 +160,12 @@ async def _manifest_reader(websocket: WebSocket, state: ConductorState, zone: st
         if isinstance(msg, dict) and msg.get("type") == "playing":
             screen = str(msg.get("screen") or "")[:64] or "-"
             clip_id = str(msg.get("clip_id") or "")[:64]
+            try:
+                shown_s = round(float(msg.get("shown_s") or 0.0), 1)
+            except (TypeError, ValueError):
+                shown_s = 0.0
             state.now_playing.setdefault(zone, {})[screen] = {
-                "clip_id": clip_id, "at": _time.time(),
+                "clip_id": clip_id, "at": _time.time(), "shown_s": shown_s,
             }
 
 
@@ -581,6 +585,7 @@ def create_app(
                 "crossfade_s": client.get("crossfade_s", 2.0),
                 "playback_rate": client.get("playback_rate", 1.0),
                 "hold_s": client.get("hold_s", 0.0),
+                "now_playing": state.now_playing.get(zone, {}),
                 # What is actually in effect: party default from the preset,
                 # then the zone's preset override, then anything changed live.
                 # Returning only the live override made the sliders show the

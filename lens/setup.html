@@ -928,6 +928,21 @@
       meta.className = 'off';
       meta.textContent = z.screens_connected + ' screen(s) connected · '
         + (z.screens.length ? z.screens.join(', ') : 'no named screens');
+      // What each wall says it is showing, and for how long. A screen that
+      // has sat on one clip for many minutes is stuck, and this is the only
+      // place an operator can see it without walking to the wall.
+      var np = z.now_playing || {};
+      Object.keys(np).sort().forEach(function (s) {
+        var row = np[s];
+        var age = Math.round((Date.now() / 1000) - (row.at || 0));
+        var line = document.createElement('span');
+        line.className = 'off';
+        line.textContent = ' · ' + s + ' showing ' + String(row.clip_id || '').slice(0, 8)
+          + ' for ' + Math.round(row.shown_s || 0) + 's';
+        if ((row.shown_s || 0) > 180) { line.className = 'bad'; line.textContent += ' — stuck?'; }
+        if (age > 30) { line.textContent += ' (last heard ' + age + 's ago)'; }
+        meta.appendChild(line);
+      });
       head.appendChild(name); head.appendChild(meta);
       box.appendChild(head);
 

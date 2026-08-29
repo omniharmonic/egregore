@@ -229,6 +229,9 @@ export class Deck {
     this._pending = false;
     this.offline = false;
     this.failures = 0;
+    this._shownAt = 0;
+    this._pendingAt = 0;
+    this.watchdogTrips = 0;
 
     for (let i = 0; i < 2; i++) {
       const el = this.v[i];
@@ -255,6 +258,34 @@ export class Deck {
     // that is most of what makes a cut feel like a breath instead of a jump.
     const d = this._dur(this.active) / this.rate;
     return Math.max(0.2, Math.min(this.pl.crossfade || 2, d * 0.45));
+  }
+
+  /** Seconds the composition on screen has been there. */
+  shownFor() {
+    return this._shownAt ? (performance.now() - this._shownAt) / 1000 : 0;
+  }
+
+  /**
+   * A wall must never sit on one clip. If the active clip has been up far
+   * longer than linger + its own length + the dissolve, or a pending load
+   * has not become playable in a reasonable time, stop trusting the
+   * <video> and start again with a fresh pick. Observed: one browser
+   * showed a single fill for sixteen minutes while another, on the same
+   * manifest, cycled normally.
+   */
+  _watchdog(now) {
+    const a = this.active, b = 1 - a;
+    const allowed = Math.max(this.pl.hold || 0, this._dur(a) / this.rate) + this.crossfade + 20;
+    const stuck = this._shownAt && (now - this._shownAt) / 1000 > allowed * 2;
+    const stalled = this._pending && this._pendingAt && (now - this._pendingAt) / 1000 > 30;
+    if (!stuck && !stalled) return false;
+    this.watchdogTrips++;
+    console.warn(`[lens] deck watchdog: ${stuck ? 'stuck on one clip' : 'next clip never became playable'} — repicking`);
+    this.fading = false; this.mix = a === 0 ? 0 : 1; this._pending = false;
+    const e = this.pl.pick();
+    if (e) { this._pending = true; this._pendingAt = now; this._load(b, e); }
+    this._shownAt = now;          // give the new attempt a full allowance
+    return true;
   }
 
   /** Has the active clip held the screen for the configured linger yet? */
@@ -389,8 +420,11 @@ export class Deck {
     const remaining = (dur - t) / this.rate;
     const lead = Math.min(3.5, (dur / this.rate) * 0.35);
 
+    if (this._watchdog(performance.now())) return;
+
     if (!this._pending && remaining <= xf + lead) {
       this._pending = true;
+      this._pendingAt = performance.now();
       // While the clip still has to linger, the "next" clip is itself: the
       // field dissolves back into its own beginning through the same
       // two-slot crossfade, so there is never a hard loop cut.

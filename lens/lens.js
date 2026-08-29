@@ -353,7 +353,10 @@ function connectManifestWs() {
     if (ws.readyState !== 1 || !deck) return;
     const cid = deck.clipId[deck.active];
     if (!cid) return;
-    try { ws.send(JSON.stringify({ type: 'playing', screen: SCREEN || '-', clip_id: cid })); }
+    try {
+      ws.send(JSON.stringify({ type: 'playing', screen: SCREEN || '-', clip_id: cid,
+                               shown_s: Math.round(deck.shownFor()) }));
+    }
     catch { /* socket closing */ }
   }, 5000);
   ws.addEventListener('close', () => clearInterval(beacon));
@@ -569,7 +572,8 @@ function updateHud() {
     `stack   ${state.stack.slice(0, state.activePasses).join('>') || '-'}` +
       (state.activePasses < state.stack.length
         ? ` ┊ ${state.stack.slice(state.activePasses).join('>')}` : ''),
-    `clip    ${cid}  mix ${(deck ? deck.mix : 0).toFixed(2)}${deck && deck.fading ? ' ~fade' : ''}`,
+    `clip    ${cid}  mix ${(deck ? deck.mix : 0).toFixed(2)}${deck && deck.fading ? ' ~fade' : ''}` +
+      `  shown ${deck ? Math.round(deck.shownFor()) : 0}s${deck && deck.watchdogTrips ? '  wd×' + deck.watchdogTrips : ''}`,
     `feed    ${features ? features.state : '-'}${features && features.local ? ' (mic)' : ''}`,
     `bus     ${state.manifestState} r${playlist ? playlist.revision : '-'}  ` +
       `clips ${playlist ? playlist.entries.length : 0}${deck && deck.offline ? '  OFFLINE' : ''}`,
