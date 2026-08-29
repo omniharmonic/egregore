@@ -50,9 +50,29 @@ def probe_environment() -> dict[str, str]:
     except Exception:
         out["audio_input"] = "sounddevice not installed (live mic unavailable)"
 
+    # The theme brain. Without one the wall is made from a fixed vocabulary.
+    out["llm"] = "not found (LM Studio :1234 / Ollama :11434) - themes from the built-in matcher"
+    if os.environ.get("EGREGORE_LLM_AUTODETECT", "1") != "0":
+        from egregore.weaver.abstractor import LOCAL_LLM_CANDIDATES, probe_llm_server
+
+        for base in LOCAL_LLM_CANDIDATES:
+            models = probe_llm_server(base)
+            if models:
+                out["llm"] = f"{base} ({len(models)} model(s)) - a small chat model is auto-picked"
+                break
+
     for name, present in _store.secrets_present().items():
         out[name] = "set" if present else "not set"
     return out
+
+
+def suggest_preset(probe: dict[str, str]) -> str:
+    """The preset this machine can run today, from what the probe found."""
+    if probe.get("comfyui", "").startswith("running") and probe.get("parakeet", "").startswith("found"):
+        return "presets/local.yaml"
+    if probe.get("FAL_KEY") == "set":
+        return "presets/cloud.yaml"
+    return "presets/demo.yaml"
 
 
 def _prompt(text: str, default: str = "") -> str:
@@ -71,8 +91,14 @@ def _cmd_setup(args: argparse.Namespace) -> int:
 
     print("\n  egregore setup")
     print("  " + "-" * 46)
-    for key, value in probe_environment().items():
+    probe = probe_environment()
+    for key, value in probe.items():
         print(f"  {key:22s} {value}")
+    if "not installed" in probe.get("audio_input", "") or "not installed" in probe.get("parakeet", ""):
+        print("\n  For a real microphone and local transcription:  uv sync --extra local")
+        print("  Then the Parakeet weights: docs/setup.md, stage 2.")
+    if probe.get("comfyui", "").startswith("not running"):
+        print("  For local video: ComfyUI + LTX-Video on :8188, docs/setup.md, stage 4.")
 
     wanted = (
         [args.non_interactive_secret]
@@ -95,7 +121,7 @@ def _cmd_setup(args: argparse.Namespace) -> int:
         print("\n  Presets:")
         for path in presets:
             print(f"    {path}")
-    chosen = _prompt("\n  Which preset should `egregore run` use?", "presets/demo.yaml")
+    chosen = _prompt("\n  Which preset should `egregore run` use?", suggest_preset(probe))
     print(f"\n  Ready:     uv run egregore run {chosen}")
     print("  Screens:   http://localhost:8420/?zone=main")
     print("  Settings:  http://localhost:8420/static/setup.html\n")

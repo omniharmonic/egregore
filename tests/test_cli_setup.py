@@ -68,3 +68,18 @@ def test_setup_needs_no_config_file(monkeypatch, home):
     monkeypatch.setattr(cli, "_prompt", lambda text, default="": default)
     monkeypatch.setattr(cli, "_prompt_secret", lambda name: "")
     assert cli.main(["setup"]) == 0
+
+
+def test_probe_reports_the_theme_brain(monkeypatch):
+    monkeypatch.setenv("EGREGORE_LLM_AUTODETECT", "0")
+    probe = cli.probe_environment()
+    assert "llm" in probe
+
+
+def test_suggested_preset_follows_the_hardware():
+    assert cli.suggest_preset({"comfyui": "running on :8188", "parakeet": "found at x",
+                               "FAL_KEY": "not set"}) == "presets/local.yaml"
+    assert cli.suggest_preset({"comfyui": "not running", "parakeet": "found at x",
+                               "FAL_KEY": "set"}) == "presets/cloud.yaml"
+    assert cli.suggest_preset({"comfyui": "not running", "parakeet": "not installed",
+                               "FAL_KEY": "not set"}) == "presets/demo.yaml"

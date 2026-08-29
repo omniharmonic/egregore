@@ -155,7 +155,7 @@ class Soak:
         self.log_path = Path(args.log)
         self.out = Path(args.out)
         self.out.mkdir(parents=True, exist_ok=True)
-        self.stamp = datetime.now().strftime("%Y-%m-%d-%H%M")
+        self.stamp = datetime.now().strftime("%Y-%m-%d-%H%M") + (f"-{args.label}" if args.label else "")
         self.samples_path = self.out / f"soak-{self.stamp}.samples.jsonl"
         self.rng = random.Random(7)
         self.t0 = time.time()
@@ -468,6 +468,7 @@ def main() -> None:
     ap.add_argument("--scene-gap", type=float, default=45.0, help="silence between scenes")
     ap.add_argument("--tail", type=float, default=300.0, help="listen after the last line")
     ap.add_argument("--rate", type=int, default=170, help="say words per minute")
+    ap.add_argument("--label", default="", help="a name for this run, in the report filename and title")
     args = ap.parse_args()
     path = Soak(args).run(args.tail, args.interval)
     print(f"report: {path}")
