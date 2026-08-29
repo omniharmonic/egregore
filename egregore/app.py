@@ -738,6 +738,10 @@ class ZonePipeline:
                 "candidates": len(candidates),
                 "winner_score": round(winner_score, 3),
                 "listened_s": round(listened, 1),
+                # How old the winning thought already was when the render
+                # slot opened. Lag on landing is this plus the render, so a
+                # quiet room reads as a quiet room, not as a slow pipeline.
+                "age_s": round(max(0.0, now - winner.ended_at), 1),
                 "lag_s": None,
                 "scored": scored_out,
             }
