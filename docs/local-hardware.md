@@ -48,22 +48,30 @@ never starves regardless of GPUs, networks, or budgets.
 
 ## Choosing a ComfyUI graph
 
-`ComfyUIBackend`'s built-in graph is a plausible default, not a contract — every
-install has its own node versions and filenames. Export your own in **API
-format** and select it:
+Two graphs are used: one for a fresh clip, one to continue a chain from the
+previous clip's last frame. Point at them when starting a party:
 
-    EGREGORE_COMFY_WORKFLOW=/path/to/graph.json uv run egregore run <preset>
+    EGREGORE_COMFY_WORKFLOW=$PWD/presets/comfyui/ltxv-2b-balanced.json \
+    EGREGORE_COMFY_SEED_WORKFLOW=$PWD/presets/comfyui/ltxv-2b-seeded.json \
+    uv run egregore run presets/local.yaml
 
-With no env var, `presets/comfyui/ltxv-2b-gguf.json` is used if present. Three
-graphs ship, measured on an Apple M2 Max (32 GB, MPS) for one 4 s clip:
+How hard the GPU works is **not** in the graph. `generation.local_quality`
+(`fast` / `balanced` / `high`) patches the sampler's steps and the latent
+size into whichever graph is loaded, live from the dashboard, and
+`local_steps` / `local_resolution` override it exactly. Measured on an Apple
+M2 Max (32 GB, MPS), one 4 s clip, nothing else on the GPU:
 
-| graph | resolution | steps | per clip |
+| level | steps | size | per clip |
 |---|---|---|---|
-| `ltxv-2b-fast.json` | 512x320 | 8 | ~96 s |
-| `ltxv-2b-gguf.json` | 704x480 | 20 | ~300 s |
-| `ltxv-2b-quality.json` | 768x512 | 30 | slower still |
+| `fast` | 8 | 512x320 | ~90 s |
+| `balanced` | 12 | 512x320 | ~110 s |
+| `high` | 12 | 640x384 | ~280 s |
 
-A graph only has to expose the three patch points Egregore writes into, located
+Resolution is the cost; steps are nearly free by comparison. With a theme
+LLM priming in the background on the same GPU, add roughly 70%.
+
+Every install has its own node versions and filenames, so export your own
+graph in **API format** if the shipped ones do not load. A graph only has to expose the three patch points Egregore writes into, located
 by `class_type` so node ids may differ:
 
 - a `CLIPTextEncode` whose `_meta.title` does **not** contain `negative` — the
