@@ -145,6 +145,21 @@ per screen, each with tunable parameters, all audio-reactive. They are a
 fixed look you set, not something the conversation changes. If a screen
 cannot keep up it lowers its internal resolution, never the look.
 
+## Which settings for my hardware
+
+| you have | run | set | expect |
+|---|---|---|---|
+| a laptop with an Apple-silicon or mid-range GPU | `presets/local.yaml` | `local_quality: balanced`, a 4B theme model, `local_stretch: 2` | a new 16s clip every ~3 min; the wall half generated video after ten minutes and rising |
+| the same, and it feels slow | `presets/local.yaml` | `local_quality: fast`, or `weaver.engine: heuristic` | a clip every ~1.5–2 min; generic themes if the LLM is off |
+| a workstation GPU (24 GB+) | `presets/local.yaml` | `local_quality: high`, `clip_duration_s: 6`, an 8B theme model | richer frames, longer shots, the same cadence |
+| two machines on the LAN | `presets/local.yaml` | `generation.comfyui_url` → the GPU box; the theme model here | local video *and* LLM themes with no GPU contention |
+| no GPU, or a big room | `presets/cloud.yaml` | a fal key and a budget | a clip every ~1 min, ~$0.25–0.40 each, hard ceiling |
+| nothing yet | `presets/demo.yaml` | — | the whole pipeline on procedural video |
+
+The numbers are from this laptop (M2 Max) and scale with the GPU. Whatever
+the renderer, the effects run at the screen's own resolution, so the look
+does not depend on the clip's.
+
 ## Is it actually listening?
 
 The dashboard answers both questions. The **audio** panel draws the live

@@ -135,6 +135,9 @@ class Forge:
         #: fill landed meanwhile" — a ClipRef alone cannot say which lane it
         #: came through.
         self._paid_done: dict[str, int] = {}
+        #: Clip ids that landed through the fill lane, so the integration
+        #: layer can keep them out of continuity movements. Bounded.
+        self._fill_ids: list[str] = []
         self._running = False
 
     # -- lifecycle ---------------------------------------------------------
@@ -217,6 +220,10 @@ class Forge:
         are both empty, which is what bounds lag at one render.
         """
         return self._inflight.get(zone, 0)
+
+    def landed_as_fill(self, clip_id: str) -> bool:
+        """Did this clip come through the free fill lane?"""
+        return clip_id in self._fill_ids
 
     def paid_completed(self, zone: str) -> int:
         """How many paid-lane clips have landed for ``zone``. Fills excluded."""
@@ -337,6 +344,9 @@ class Forge:
             self.stats.completed += 1
             if not job.free_only:
                 self._paid_done[job.zone] = self._paid_done.get(job.zone, 0) + 1
+            else:
+                self._fill_ids.append(clip.id)
+                del self._fill_ids[:-512]
             self.stats.by_backend[backend.name] = (
                 self.stats.by_backend.get(backend.name, 0) + 1
             )

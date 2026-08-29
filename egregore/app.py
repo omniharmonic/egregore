@@ -602,7 +602,7 @@ class ZonePipeline:
     # -- output wiring ------------------------------------------------------
 
     async def on_clip(self, clip: ClipRef) -> None:
-        await self.loom.ingest(clip, clip.path)
+        await self.loom.ingest(clip, clip.path, fill=self.forge.landed_as_fill(clip.id))
         self.state.set_manifest(self.zone, self.loom.manifest())
         landed_paid = self.forge.paid_completed(self.zone) > self._paid_done_at_request
         if landed_paid and self._lag_anchor is not None and self.last_selection is not None:

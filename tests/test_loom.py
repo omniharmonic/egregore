@@ -452,3 +452,22 @@ async def test_manifest_tells_screens_which_clips_form_a_movement(tmp_path: Path
     assert by_id["c0"].movement_id == by_id["c1"].movement_id == by_id["c2"].movement_id
     assert by_id["c0"].movement_id is not None
     assert [by_id[f"c{i}"].chain_index for i in range(3)] == [0, 1, 2]
+
+
+@pytest.mark.skipif(not HAVE_FFMPEG, reason="ffmpeg not on PATH")
+async def test_fills_join_the_playlist_but_never_a_movement(tmp_path: Path):
+    # A procedural fill is not seeded from anything and nothing is seeded
+    # from it; letting it into a movement put unrelated clips between the
+    # seams the chain exists for.
+    clip_path = _make_fixture_clip(tmp_path)
+    loom = ZoneLoom("main", "continuity", max_chain_length=4, clock=lambda: 0.0)
+    await loom.ingest(make_clip("real0", created_at=0.0), clip_path)
+    fill = ClipRef(id="fill", path=Path("/nonexistent/fill.mp4"), duration_s=12.0, zone="main",
+                   backend="procedural", tier="mock", created_at=0.0)
+    await loom.ingest(fill, clip_path, fill=True)
+    await loom.ingest(make_clip("real1", created_at=0.0), clip_path)
+    assert loom.playlist.size == 3
+    assert loom.movements[0].clip_ids == ["real0", "real1"]
+    assert loom.current_chain_length == 2
+    by_id = {e.clip_id: e for e in loom.manifest().entries}
+    assert by_id["fill"].movement_id is None

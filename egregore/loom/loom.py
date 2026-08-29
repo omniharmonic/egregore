@@ -164,7 +164,7 @@ class ZoneLoom:
 
     # -- ingest ---------------------------------------------------------------
 
-    async def ingest(self, clip: ClipRef, clip_path: Path) -> None:
+    async def ingest(self, clip: ClipRef, clip_path: Path, *, fill: bool = False) -> None:
         """Absorb one newly generated clip.
 
         Always adds to the playlist. In continuity mode, also advances the
@@ -174,6 +174,10 @@ class ZoneLoom:
         ffmpeg call never breaks the chain.
         """
         self.playlist.add(clip)
+        if fill:
+            # A fill is not seeded from anything and nothing is seeded from
+            # it. It plays; it does not join a movement.
+            return
         self._last_clip = clip
 
         if self.mode != "continuity":
