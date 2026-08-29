@@ -578,6 +578,10 @@ def _extract_first_json_object(text: str) -> dict[str, Any]:
     Raises AbstractionError with a content-free message on failure — the reply
     may contain transcript fragments and must never reach a log.
     """
+    # A thinking model that ignored the request not to think wraps its
+    # reasoning in <think>…</think>, which may itself contain braces.
+    if "</think>" in text:
+        text = text.split("</think>", 1)[1]
     start = text.find("{")
     while start != -1:
         depth = 0
@@ -668,7 +672,7 @@ class LLMAbstractor:
         *,
         timeout: float = 30.0,
         temperature: float = 0.4,
-        max_tokens: int = 400,
+        max_tokens: int = 900,
         client: Any | None = None,
     ) -> None:
         self.base_url = (base_url or os.environ.get("EGREGORE_LLM_BASE_URL", "")).rstrip("/")

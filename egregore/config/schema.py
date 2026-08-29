@@ -103,11 +103,12 @@ class WeaverConfig(BaseModel):
 
 #: What "how hard should the local GPU work" means, as (steps, "WxH").
 #: Measured on an Apple-silicon laptop with LTX-Video 2B, 4-second clips:
-#: fast ~80s, balanced ~2 min, high ~4 min. A bigger GPU shifts all three.
+#: resolution is the cost, steps are nearly free by comparison —
+#: fast ~90s, balanced ~2 min, high ~4.5 min. A bigger GPU shifts all three.
 LOCAL_QUALITY: dict[str, tuple[int, str]] = {
     "fast": (8, "512x320"),
-    "balanced": (12, "640x384"),
-    "high": (20, "768x448"),
+    "balanced": (12, "512x320"),
+    "high": (12, "640x384"),
 }
 
 

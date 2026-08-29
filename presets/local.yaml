@@ -41,7 +41,7 @@ generation:
   fallback: "procedural"      # never let the room go dark
   clip_duration_s: 4          # what the local model renders in time
   fill_duration_s: 12         # free procedural fills: long enough to linger on
-  # How hard the GPU works per clip: fast ~80s, balanced ~2 min, high ~4 min
+  # How hard the GPU works per clip: fast ~90s, balanced ~2 min, high ~4.5 min
   # on an Apple-silicon laptop. Drop to "fast" if clips come too slowly;
   # go "high" on a workstation. local_steps / local_resolution override it.
   local_quality: "balanced"

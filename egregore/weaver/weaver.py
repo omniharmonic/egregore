@@ -247,13 +247,19 @@ class Weaver:
             theme: ThemeObject | None = None
             try:
                 self._steer()
-                started = asyncio.get_event_loop().time()
-                candidate = await self.abstractor.abstract(text, mood, attempt=0)
-                self._note_call(asyncio.get_event_loop().time() - started, timed_out=False)
+                # Off the critical path: the GPU is rendering meanwhile, so
+                # a slow answer here costs nothing and does not count
+                # against the brain. Only a true stall is given up on.
+                candidate = await asyncio.wait_for(
+                    self.abstractor.abstract(text, mood, attempt=0),
+                    timeout=max(60.0, 4.0 * self.stage1_budget_s),
+                )
                 if validate_theme(candidate, text).ok:
                     theme = candidate
                 else:
                     self.rejections += 1
+            except TimeoutError:
+                log.warning("weaver background stage-1 stalled; skipped")
             except AbstractionError as exc:
                 # The message is content-free by construction (endpoint
                 # error class or parse failure), so it is safe to log and is

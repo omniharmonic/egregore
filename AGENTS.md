@@ -97,8 +97,8 @@ uv run egregore run presets/local.yaml
 ```
 
 How hard the GPU works is not in the graph: it is `generation.local_quality`
-(`fast` ~80s a clip on an Apple-silicon laptop, `balanced` ~2 min,
-`high` ~4 min), changeable live on the dashboard.
+(`fast` ~90s a clip on an Apple-silicon laptop, `balanced` ~2 min,
+`high` ~4.5 min), changeable live on the dashboard.
 
 **Success:** `curl -s localhost:8188/system_stats` returns JSON, and within
 ~3 minutes of starting the party the log shows a line containing

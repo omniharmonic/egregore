@@ -117,8 +117,8 @@ how much the sound of the room pushes the palette.
 
 **Rendering.** `generation.backend` (*restart*) picks the renderer: `local`
 (ComfyUI + LTX-Video on this or another machine), `fal`, `veo`, or
-`procedural`. On local, **local quality** is the knob: `fast` (~80s a clip on
-a laptop), `balanced` (~2 min, the default), `high` (~4 min); a workstation
+`procedural`. On local, **local quality** is the knob: `fast` (~90s a clip on
+a laptop), `balanced` (~2 min, the default), `high` (~4.5 min); a workstation
 shifts all three. The procedural renderer fills gaps for free and is never
 the material. `budget.total_usd` is a hard ceiling for cloud spend; at zero,
 no cloud call is even possible.

@@ -1018,3 +1018,21 @@ async def test_a_brain_within_budget_is_kept():
     for i in range(4):
         await w.weave_candidates([seg(f"the tide pools were glowing green tonight number {i}", i)])
     assert w.engine_name == "slow"
+
+
+async def test_background_calls_do_not_count_against_the_brain():
+    # A background abstraction runs while the GPU renders; taking a while
+    # there costs nothing. Only a render slot waiting on stage 1 is a miss.
+    slow = SlowCounting(delay=0.2)
+    w = Weaver(slow, stage1_budget_s=0.05, max_slow_calls=2)
+    segs = [seg(f"the tide pools were glowing green tonight number {i}", i) for i in range(4)]
+    w.prime(segs)
+    await w.drain(timeout=5.0)
+    assert w.engine_name == "slow", "slow in the background is fine"
+    assert all(w.cached(s) is not None for s in segs[:-1])
+
+
+def test_think_tags_are_stripped_before_json_is_read():
+    from egregore.weaver.abstractor import _extract_first_json_object
+    reply = '<think>\nsome private reasoning {not json}\n</think>\n{"motifs": ["a"], "register": "ambient"}'
+    assert _extract_first_json_object(reply)["motifs"] == ["a"]
