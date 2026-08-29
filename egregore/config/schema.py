@@ -95,10 +95,10 @@ class WeaverConfig(BaseModel):
     # How long a render may wait on stage 1 for a thought that was not
     # already abstracted in the background. Past this the heuristic stands
     # in, so a slow LLM costs quality on that one thought, never lag.
-    stage1_budget_s: float = Field(10.0, ge=0.5, le=120.0)
+    stage1_budget_s: float = Field(15.0, ge=0.5, le=120.0)
     # After this many consecutive calls over budget the LLM is stood down
     # for the party and the heuristic takes over; the status page says so.
-    max_slow_calls: int = Field(3, ge=1, le=20)
+    max_slow_calls: int = Field(4, ge=1, le=20)
 
 
 #: What "how hard should the local GPU work" means, as (steps, "WxH").

@@ -28,7 +28,8 @@ preset on later runs; the start-up banner lists every override, and
 | `weaver.llm.autodetect` | true | With no `base_url`, look for LM Studio (`:1234`) and Ollama (`:11434`) and use the smallest chat model they list. `EGREGORE_LLM_AUTODETECT=0` disables. **restart** |
 | `weaver.llm.base_url` | none | An explicit OpenAI-compatible endpoint. **restart** |
 | `weaver.llm.model` | `qwen3:14b` | Used if the server lists it; otherwise the smallest chat model is chosen. A 4–8B model is right for this task. **restart** |
-| `weaver.stage1_budget_s` | 10 | How long a render slot may wait for a thought that was not already abstracted in the background before the matcher stands in. Thoughts are abstracted as they arrive, so this rarely binds. |
+| `weaver.stage1_budget_s` | 15 | How long a render slot may wait for a thought that was not already abstracted in the background before the matcher stands in. Thoughts are abstracted as they arrive, so this rarely binds. |
+| `weaver.max_slow_calls` | 4 | After this many consecutive calls over budget the LLM is stood down for the party and the heuristic takes over; the status page says why. Measured: a 4B model with thinking off answers in 5–15s under render load; a 27B took 60–175s. |
 | `weaver.fallback_after_s` | 120 | Silence a room may sit in before a clip is rendered from mood and memory alone. Below this, free fills cover the screen; a mood-only render is for a real lull, not for the first minutes while people arrive. |
 | `privacy.ring_buffer_minutes` | 6 | How long transcript text exists, in memory only. The guarantee the signage makes. ≤ 10. |
 | `privacy.ring_buffer_max_bytes` | 8192 | A second cap that can only shorten retention. |
