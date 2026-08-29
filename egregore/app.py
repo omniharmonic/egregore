@@ -241,6 +241,8 @@ class LiveSettings:
     #: so a live change can touch one field without rebuilding the model.
     selection: dict = dc_field(default_factory=dict)
     selection_by_zone: dict[str, dict] = dc_field(default_factory=dict)
+    #: Silence a room may sit in before a clip is rendered from mood alone.
+    fallback_after_s: float = 120.0
 
     def selection_for(self, zone: str) -> SelectionConfig:
         """Zone override on top of the party default, validated."""
@@ -277,6 +279,7 @@ class LiveSettings:
             abstraction=cfg.aesthetic.abstraction,
             local_steps=cfg.generation.local_steps,
             local_resolution=cfg.generation.local_resolution,
+            fallback_after_s=cfg.weaver.fallback_after_s,
             selection=cfg.weaver.selection.model_dump(),
             selection_by_zone={
                 z.id: z.selection.model_dump(exclude_unset=True)
@@ -309,6 +312,10 @@ class LiveSettings:
             changed.append("generation.local_resolution")
         if "local_steps" in gen or "local_resolution" in gen:
             self._push_hardware()
+        weaver_over = overrides.get("weaver") or {}
+        if "fallback_after_s" in weaver_over:
+            self.fallback_after_s = float(weaver_over["fallback_after_s"] or 0.0)
+            changed.append("weaver.fallback_after_s")
         sel = (overrides.get("weaver") or {}).get("selection") or {}
         for k in ("salience", "novelty", "recency", "segment_gap_s",
                   "max_candidates", "recency_tau_s"):
@@ -431,6 +438,11 @@ class ZonePipeline:
         #: under pull scheduling the next cycle starts the second a clip
         #: lands and would overwrite the record before anyone read it.
         self.last_lag_s: float | None = None
+        #: When this zone last rendered from speech (or started), so a lull
+        #: is measured from something real rather than from the epoch.
+        self._last_speech_render_at: float = time.monotonic()
+        #: Paid cycles skipped because the room had said nothing yet.
+        self.held_for_speech = 0
         self._tasks: list[asyncio.Task] = []
         self._source = self._build_source(cfg)
 
@@ -583,6 +595,24 @@ class ZonePipeline:
                 due = spaced and not busy
                 if spaced and busy:
                     self.waited_for_slot += 1
+                sel_cfg = self.live.selection_for(self.zone)
+                segments = self.ring.segments(sel_cfg.segment_gap_s)
+                window_tokens = sum(s.tokens for s in segments)
+                borrowed: ThemeObject | None = None
+                if window_tokens < self.weaver.min_window_tokens:
+                    # Zone-to-zone bleed (L-7): a quiet or dead zone dreams
+                    # on a neighbouring zone's most recent validated theme.
+                    borrowed = self.bus.borrow_theme(self.zone)
+                if due and borrowed is None and window_tokens < self.weaver.min_window_tokens:
+                    lull = time.monotonic() - self._last_speech_render_at
+                    if lull < self.live.fallback_after_s:
+                        # Nothing said yet, or not for long. A mood-only
+                        # render is for a real lull; spending a render slot
+                        # on it while people are still arriving wastes the
+                        # one thing this backend is short of. Demoted to
+                        # "not due" so the free lane still covers the screen.
+                        self.held_for_speech += 1
+                        due = False
                 fill = False
                 if not due:
                     gap = self.live.fill_interval_s
@@ -599,14 +629,6 @@ class ZonePipeline:
                     continue
                 self._last_clip_request = time.monotonic()
                 plan = self.loom.plan_next()
-                sel_cfg = self.live.selection_for(self.zone)
-                segments = self.ring.segments(sel_cfg.segment_gap_s)
-                window_tokens = sum(s.tokens for s in segments)
-                borrowed: ThemeObject | None = None
-                if window_tokens < self.weaver.min_window_tokens:
-                    # Zone-to-zone bleed (L-7): a quiet or dead zone dreams
-                    # on a neighbouring zone's most recent validated theme.
-                    borrowed = self.bus.borrow_theme(self.zone)
                 if borrowed is not None:
                     prompt = synthesize_prompt(
                         borrowed,
@@ -682,6 +704,8 @@ class ZonePipeline:
                     # would never be spent at all once filling starts.
                     self.governor.record_generation(self.zone)
                     self._paid_done_at_request = self.forge.paid_completed(self.zone)
+                    if not fallback:
+                        self._last_speech_render_at = time.monotonic()
                 await self.forge.request(
                     zone=self.zone,
                     prompt=prompt,
@@ -808,6 +832,7 @@ class ZonePipeline:
             "in_flight": self.forge.in_flight(self.zone),
             "lag_s": self.last_lag_s,
             "waited_for_slot": self.waited_for_slot,
+            "held_for_speech": self.held_for_speech,
             "last_selection": (
                 {k: v for k, v in self.last_selection.items() if k != "scored"}
                 if self.last_selection else None

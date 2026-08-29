@@ -54,6 +54,7 @@ LIVE_KEYS: frozenset[str] = frozenset({
     "weaver.selection.segment_gap_s",
     "weaver.selection.max_candidates",
     "weaver.selection.recency_tau_s",
+    "weaver.fallback_after_s",
 })
 
 #: Settings read once at start-up. Changing these builds a different backend

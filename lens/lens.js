@@ -35,6 +35,7 @@ const el = {
   canvas: $('gl'), vidA: $('vidA'), vidB: $('vidB'),
   enter: $('enter'), join: $('join'), joinForm: $('joinForm'),
   joinPass: $('joinPass'), joinErr: $('joinErr'), hud: $('hud'),
+  notice: $('notice'), noticeText: $('noticeText'),
   bootLog: $('bootLog'), enterPrompt: $('enterPrompt'), enterHint: $('enterHint'),
 };
 
@@ -300,10 +301,23 @@ async function bootstrapData() {
 
   const got = await playlist.refresh();
   if (!got) {
+    // A screen on a zone the party does not have used to sit black forever.
+    // Say so — the fix is in the address bar, not in the room.
+    try {
+      const r = await fetch(`/api/manifest?zone=${encodeURIComponent(ZONE)}`,
+                            { credentials: 'same-origin' });
+      if (r.status === 404) {
+        el.noticeText.textContent =
+          `this party has no zone called "${ZONE}" — check ?zone= in the address`;
+        el.notice.hidden = false;
+        document.body.classList.add('ui');
+      }
+    } catch { /* keep retrying below */ }
     console.warn('[lens] manifest unavailable; will keep retrying');
     setTimeout(() => { if (!playlist.ok) bootstrapData(); }, 5000);
     return;
   }
+  if (!el.notice.hidden) { el.notice.hidden = true; document.body.classList.remove('ui'); }
   if (!deck) deck = new Deck([el.vidA, el.vidB], playlist, cache);
   if (!deck.clipId[deck.active]) await deck.begin();
 }

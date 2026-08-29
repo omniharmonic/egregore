@@ -71,6 +71,11 @@ class WeaverConfig(BaseModel):
     engine: Literal["auto", "llm", "heuristic"] = "auto"  # auto = llm if configured
     llm: WeaverLLMConfig = Field(default_factory=WeaverLLMConfig)
     selection: SelectionConfig = Field(default_factory=SelectionConfig)
+    # How long a room may be silent before a clip is rendered from mood and
+    # memory alone. Below this the free lane covers the screen: a mood-only
+    # prompt is the right thing for a long lull, not for the first two
+    # minutes of a party while people are still arriving.
+    fallback_after_s: float = Field(120.0, ge=0.0, le=3600.0)
 
 
 class GenerationConfig(BaseModel):

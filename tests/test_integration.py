@@ -594,3 +594,39 @@ async def test_a_restart_picks_the_pool_back_up(tmp_path):
         assert pipe.loom.playlist.size >= 2, "pool resumed before any new render"
         assert pipe.loom.last_frame is not None, "chain seeds from the newest clip"
         assert party.state.get_manifest("main") is not None
+
+
+def _silent_cfg(tmp_path, fallback_after_s: float) -> EgregoreConfig:
+    quiet = tmp_path / "quiet.txt"
+    # The fixture engine refuses an empty script; one line far in the future
+    # is a room that says nothing for the whole test.
+    quiet.write_text("59:00\tnothing yet\n")
+    return EgregoreConfig.model_validate({
+        "party": {"name": "drill", "duration_hours": 0.5},
+        "generation": {"backend": "mock", "clip_duration_s": 2},
+        "budget": {"total_usd": "0"},
+        "weaver": {"fallback_after_s": fallback_after_s},
+        "zones": [{"id": "main", "mic": {"type": "fixture", "fixture_path": str(quiet)}}],
+        "clip_store_dir": str(tmp_path / "clips"),
+        "demo_time_scale": 30,
+    })
+
+
+async def test_a_silent_room_does_not_spend_its_first_render_on_nothing(tmp_path):
+    # A mood-only prompt is what the room gets when it has said nothing for
+    # a long while — not what the first two minutes of a party should be
+    # spent rendering. Fills cover the screen meanwhile.
+    async with Party(_silent_cfg(tmp_path, fallback_after_s=100.0)) as party:
+        party.live.fill_interval_s = 0.5
+        await party.wait_clips(1, "main")           # a fill landed
+        await asyncio.sleep(3.0)
+        assert party.forge.paid_completed("main") == 0
+        assert party.pipelines["main"].status()["held_for_speech"] > 0
+
+
+async def test_a_silent_room_does_eventually_render_from_mood(tmp_path):
+    async with Party(_silent_cfg(tmp_path, fallback_after_s=1.0)) as party:
+        deadline = time.monotonic() + 20
+        while party.forge.paid_completed("main") == 0 and time.monotonic() < deadline:
+            await asyncio.sleep(0.2)
+        assert party.forge.paid_completed("main") >= 1
