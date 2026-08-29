@@ -29,11 +29,27 @@ from .abstractor import (
     lexicon_vocabulary,
     theme_from_payload,
 )
+from .select import (
+    MEMORY_DEPTH,
+    MIN_TAU_S,
+    Candidate,
+    ScoredCandidate,
+    Selection,
+    Weights,
+    select,
+)
 from .synthesis import SAFETY_FLOOR, SAFETY_FLOOR_HEADER, synthesize_prompt
 from .validator import GAZETTEER, ValidationResult, validate_theme
 from .weaver import MIN_WINDOW_TOKENS, Weaver, WeaveResult
 
 __all__ = [
+    "MEMORY_DEPTH",
+    "MIN_TAU_S",
+    "Candidate",
+    "ScoredCandidate",
+    "Selection",
+    "Weights",
+    "select",
     "CONCEPT_CLUSTERS",
     "GAZETTEER",
     "MIN_WINDOW_TOKENS",
