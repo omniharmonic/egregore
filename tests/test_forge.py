@@ -1700,3 +1700,21 @@ async def test_in_flight_counts_only_the_job_being_rendered(tmp_path):
         assert forge.in_flight("z") == 0
     finally:
         await forge.close()
+
+
+async def test_paid_completed_counts_only_the_paid_lane(tmp_path):
+    # The pipeline measures lag on the clip it asked for, and a fill landing
+    # first must not be mistaken for it.
+    store = ClipStore(tmp_path)
+    forge = Forge([MockBackend(store, name="procedural")], store)
+    forge.start()
+    try:
+        assert forge.paid_completed("z") == 0
+        await forge.request(zone="z", prompt="p", duration_s=2, tier="fast", free_only=True)
+        await forge.join("z")
+        assert forge.paid_completed("z") == 0, "a fill is not a paid completion"
+        await forge.request(zone="z", prompt="p", duration_s=2, tier="fast")
+        await forge.join("z")
+        assert forge.paid_completed("z") == 1
+    finally:
+        await forge.close()

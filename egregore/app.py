@@ -423,6 +423,9 @@ class ZonePipeline:
         #: When the winning segment ended, so the landing clip can report
         #: how far behind the room it is.
         self._lag_anchor: float | None = None
+        #: Forge.paid_completed at the moment of the last paid request, so
+        #: on_clip can tell that clip from a fill that lands first.
+        self._paid_done_at_request = 0
         self._tasks: list[asyncio.Task] = []
         self._source = self._build_source(cfg)
 
@@ -519,9 +522,11 @@ class ZonePipeline:
     async def on_clip(self, clip: ClipRef) -> None:
         await self.loom.ingest(clip, clip.path)
         self.state.set_manifest(self.zone, self.loom.manifest())
-        if self._lag_anchor is not None and self.last_selection is not None:
-            # Monotonic domain: the ring stamps fragments with time.monotonic,
-            # so the anchor is monotonic too.
+        landed_paid = self.forge.paid_completed(self.zone) > self._paid_done_at_request
+        if landed_paid and self._lag_anchor is not None and self.last_selection is not None:
+            # Only the clip this selection asked for — a fill landing first
+            # would otherwise report a four-second lag on an eighty-second
+            # render. Monotonic domain, like the ring's fragment stamps.
             self.last_selection["lag_s"] = round(time.monotonic() - self._lag_anchor, 1)
             self._lag_anchor = None
 
@@ -607,7 +612,10 @@ class ZonePipeline:
                 prompt = ""
                 fallback = False
                 if window_tokens >= self.weaver.min_window_tokens:
-                    chosen = await self._choose_theme(segments, sel_cfg)
+                    # A fill chooses its theme the same way, but only a paid
+                    # cycle writes the record: the lag and the candidate list
+                    # describe the clip the room is waiting for.
+                    chosen = await self._choose_theme(segments, sel_cfg, record=not fill)
                     if chosen is not None:
                         theme = chosen
                         prompt = synthesize_prompt(
@@ -637,8 +645,9 @@ class ZonePipeline:
                     prompt = result.prompt
                     theme = result.theme
                     fallback = result.fallback
-                    self.last_selection = None
-                    self._lag_anchor = None
+                    if not fill:
+                        self.last_selection = None
+                        self._lag_anchor = None
                 # The outbound prompt is the one string this system is
                 # willing to send to a third party, so showing it to the
                 # operator is strictly safer than what already happens to it.
@@ -650,6 +659,7 @@ class ZonePipeline:
                     # A fill must not reset the paid cadence, or the budget
                     # would never be spent at all once filling starts.
                     self.governor.record_generation(self.zone)
+                    self._paid_done_at_request = self.forge.paid_completed(self.zone)
                 await self.forge.request(
                     zone=self.zone,
                     prompt=prompt,
@@ -671,7 +681,9 @@ class ZonePipeline:
                 # loop must survive anything (degradation, not death).
                 log.exception("zone %s: generation cycle failed", self.zone)
 
-    async def _choose_theme(self, segments, sel_cfg: SelectionConfig) -> ThemeObject | None:
+    async def _choose_theme(
+        self, segments, sel_cfg: SelectionConfig, *, record: bool = True
+    ) -> ThemeObject | None:
         """Abstract each stretch of speech, score them, keep the best.
 
         Records ``last_selection`` (counts and scores — motifs are validated
@@ -715,14 +727,15 @@ class ZonePipeline:
                 "score": round(sc.score, 3),
                 "winner": sc.candidate is winner,
             } for sc in selection.scored]
-        self.last_selection = {
-            "candidates": len(candidates),
-            "winner_score": round(winner_score, 3),
-            "listened_s": round(listened, 1),
-            "lag_s": None,
-            "scored": scored_out,
-        }
-        self._lag_anchor = winner.ended_at
+        if record:
+            self.last_selection = {
+                "candidates": len(candidates),
+                "winner_score": round(winner_score, 3),
+                "listened_s": round(listened, 1),
+                "lag_s": None,
+                "scored": scored_out,
+            }
+            self._lag_anchor = winner.ended_at
         return winner.theme
 
     def _last_render_s(self) -> float:

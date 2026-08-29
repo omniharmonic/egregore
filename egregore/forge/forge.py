@@ -130,6 +130,11 @@ class Forge:
         self._workers: dict[str, asyncio.Task[None]] = {}
         self._fill_workers: dict[str, asyncio.Task[None]] = {}
         self._inflight: dict[str, int] = {}
+        #: Paid-lane completions per zone. The pipeline compares this before
+        #: and after a request to tell "the clip I asked for landed" from "a
+        #: fill landed meanwhile" — a ClipRef alone cannot say which lane it
+        #: came through.
+        self._paid_done: dict[str, int] = {}
         self._running = False
 
     # -- lifecycle ---------------------------------------------------------
@@ -212,6 +217,10 @@ class Forge:
         are both empty, which is what bounds lag at one render.
         """
         return self._inflight.get(zone, 0)
+
+    def paid_completed(self, zone: str) -> int:
+        """How many paid-lane clips have landed for ``zone``. Fills excluded."""
+        return self._paid_done.get(zone, 0)
 
     def fill_queue_depth(self, zone: str) -> int:
         queue = self._fill_queues.get(zone)
@@ -326,6 +335,8 @@ class Forge:
                 await self.settle(reservation, cost)
 
             self.stats.completed += 1
+            if not job.free_only:
+                self._paid_done[job.zone] = self._paid_done.get(job.zone, 0) + 1
             self.stats.by_backend[backend.name] = (
                 self.stats.by_backend.get(backend.name, 0) + 1
             )

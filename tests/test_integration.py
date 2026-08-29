@@ -555,3 +555,28 @@ async def test_selection_weights_are_live_per_zone(tmp_path):
         assert party.live.selection_for("main").novelty == 0.1
         party.state.settings_handler({"weaver": {"selection": {"novelty": 0.6}}})
         assert party.live.selection_for("main").novelty == 0.1, "zone override wins"
+
+
+async def test_lag_is_measured_on_the_paid_clip_not_a_fill(tmp_path):
+    cfg = _cfg(tmp_path, zones=[{"id": "main", "mic": {"type": "fixture"}}])
+    store = ClipStore(Path(cfg.clip_store_dir))
+    slow = GatedMock(store, name="local")
+    free = MockBackend(store, name="procedural")
+    async with Party(cfg, ladder=[slow, free]) as party:
+        pipe = party.pipelines["main"]
+        party.live.fill_interval_s = 0.5
+        await _wait_store(store, 2)               # fills landed while local is held
+        deadline = time.monotonic() + 20
+        while (pipe.last_selection is None) and time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+        assert pipe.last_selection is not None
+        assert pipe.last_selection.get("lag_s") is None, "a fill must not stamp the lag"
+        held = time.monotonic()
+        await asyncio.sleep(2.0)
+        slow.gate.set()
+        deadline = time.monotonic() + 20
+        while pipe.last_selection.get("lag_s") is None and time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+        lag = pipe.last_selection.get("lag_s")
+        assert lag is not None and lag >= (time.monotonic() - held) - 0.5
+        slow.gate.set()
