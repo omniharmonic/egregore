@@ -115,6 +115,8 @@ class ComfyUIBackend:
         initial_latency_s: float = 60.0,
         latency_smoothing: float = 0.3,
         seed_workflow: dict | None = None,
+        steps: int | None = None,
+        resolution: str | None = None,
     ) -> None:
         self.name = name
         # Seed for estimated_latency() until real timings arrive; every
@@ -147,6 +149,13 @@ class ComfyUIBackend:
         self.seed_workflow = (
             copy.deepcopy(seed_workflow) if seed_workflow is not None else None
         )
+        #: How hard this machine works per clip. Set from config rather than
+        #: baked into the graph, so one graph serves a laptop and a DGX, and
+        #: so an operator can retune mid-party without a restart — a restart
+        #: drops the clip pool and the continuity chain with it. ``None``
+        #: leaves whatever the graph already specifies alone.
+        self.steps = steps
+        self.resolution = resolution
 
     # -- protocol ----------------------------------------------------------
 
@@ -324,6 +333,7 @@ class ComfyUIBackend:
         workflow = copy.deepcopy(base)
         # LTX-2 latent length is in frames and wants 8n+1.
         frames = duration_s * FPS + 1
+        size = self._size()
 
         positive_patched = False
         for node in workflow.values():
@@ -338,16 +348,42 @@ class ComfyUIBackend:
                 "EmptyLTXVLatentVideo", "EmptyLatentVideo", "LTXVImgToVideo"
             ):
                 inputs["length"] = frames
+                if size is not None:
+                    # A seeded graph derives its size from the uploaded still,
+                    # so it may carry no width/height at all. Only override
+                    # what the graph actually declares.
+                    if "width" in inputs:
+                        inputs["width"] = size[0]
+                    if "height" in inputs:
+                        inputs["height"] = size[1]
             elif class_type == "LoadImage" and seed_name is not None:
                 inputs["image"] = seed_name
             elif class_type == "KSampler":
                 inputs["seed"] = uuid.uuid4().int % (1 << 32)
+                if self.steps is not None:
+                    inputs["steps"] = int(self.steps)
 
         if not positive_patched:
             raise RuntimeError(
                 f"{self.name}: workflow has no CLIPTextEncode node to carry the prompt"
             )
         return workflow
+
+    def _size(self) -> tuple[int, int] | None:
+        """``resolution`` as (width, height), or None if unset or unparsable.
+
+        A malformed value is ignored rather than raised on: the schema
+        validates what the operator types, and a bad value arriving by some
+        other route should cost the graph's own size, not the clip.
+        """
+        if not self.resolution:
+            return None
+        try:
+            w, h = (int(part) for part in str(self.resolution).lower().split("x"))
+        except ValueError:
+            log.warning("ignoring unparsable resolution %r", self.resolution)
+            return None
+        return w, h
 
     def _http(self) -> httpx.AsyncClient:
         if self._client is None:

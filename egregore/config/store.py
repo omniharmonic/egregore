@@ -41,6 +41,8 @@ SECRET_NAMES: tuple[str, ...] = ("FAL_KEY", "GEMINI_API_KEY", "EGREGORE_PARTY_PA
 LIVE_KEYS: frozenset[str] = frozenset({
     "generation.clip_duration_s",
     "generation.resolution",
+    "generation.local_steps",
+    "generation.local_resolution",
     "continuity.default_mode",
     "aesthetic.drift",
     "aesthetic.grammar",
@@ -147,6 +149,43 @@ def validate_overrides(overrides: dict) -> EgregoreConfig:
     we want to write to disk.
     """
     return apply_overlay(EgregoreConfig(), overrides)
+
+
+def expand_dotted(data: dict) -> dict:
+    """Turn any ``{"a.b": v}`` keys into ``{"a": {"b": v}}``, recursively.
+
+    The dashboard nests before posting, but the dotted form is the obvious
+    thing to send by hand — and it used to be accepted and then quietly
+    dropped. It passed validation, because an unknown top-level key is
+    ignored; it matched ``LIVE_KEYS`` verbatim, so the response reported it as
+    applied; and it was written to ``settings.yaml`` as a literal key nothing
+    reads. The setting looked saved and did nothing, permanently.
+
+    Raises ``ValueError`` when a dotted key would have to write inside a value
+    that is not a mapping: discarding one of the two silently is worse than
+    refusing.
+    """
+    out: dict[str, Any] = {}
+    for key, value in (data or {}).items():
+        if isinstance(value, dict):
+            value = expand_dotted(value)
+        node = out
+        parts = str(key).split(".")
+        for part in parts[:-1]:
+            existing = node.get(part)
+            if existing is None:
+                existing = node[part] = {}
+            elif not isinstance(existing, dict):
+                raise ValueError(f"{key!r} conflicts with a non-mapping value at {part!r}")
+            node = existing
+        leaf = parts[-1]
+        if isinstance(node.get(leaf), dict) and isinstance(value, dict):
+            node[leaf] = _deep_merge(node[leaf], value)
+        elif leaf in node and not isinstance(node.get(leaf), dict) and isinstance(value, dict):
+            raise ValueError(f"{key!r} conflicts with a non-mapping value at {leaf!r}")
+        else:
+            node[leaf] = value
+    return out
 
 
 def dotted_keys(data: dict, prefix: str = "") -> list[str]:

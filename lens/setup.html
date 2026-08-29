@@ -361,7 +361,17 @@
     { path: 'generation.fallback',     label: 'fallback',   type: 'select',
       options: ['procedural', 'local', 'fal', 'mock', 'none'] },
     { path: 'generation.comfyui_url',  label: 'comfyui url', type: 'text' },
-    { path: 'generation.resolution',   label: 'resolution', type: 'text' },
+    { path: 'generation.resolution',   label: 'resolution', type: 'text',
+      note: 'what the cloud backends are billed at' },
+    { path: 'generation.local_steps',  label: 'local steps', type: 'number',
+      min: 1, max: 100, step: 1, nullable: true,
+      note: 'how hard the local GPU works per clip. fewer steps means video '
+          + 'arrives closer to the conversation that shaped it; more means a '
+          + 'cleaner frame. blank leaves your workflow file alone' },
+    { path: 'generation.local_resolution', label: 'local size', type: 'text',
+      nullable: true,
+      note: 'local render size, e.g. 512x320. multiples of 32. blank leaves '
+          + 'your workflow file alone' },
     { path: 'generation.clip_duration_s', label: 'clip seconds', type: 'number',
       min: 2, max: 8, step: 1 },
     { path: 'aesthetic.drift',         label: 'drift',      type: 'number',
@@ -563,7 +573,14 @@
 
       input.addEventListener('change', function () {
         var raw = input.value;
-        if (raw === '') return;
+        if (raw === '') {
+          // For most fields a blank box is a slip of the hand and clearing
+          // the setting is not what was meant. For a nullable one, blank is
+          // itself the value: "leave whatever the workflow file says alone".
+          if (!field.nullable) return;
+          save(field.path, null, kind, flash);
+          return;
+        }
         var value = field.type === 'number' ? Number(raw) : raw;
         save(field.path, value, kind, flash);
       });

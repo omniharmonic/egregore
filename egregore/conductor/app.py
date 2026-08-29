@@ -378,6 +378,13 @@ def create_app(
     @app.post("/api/settings", dependencies=[Depends(require_operator)])
     async def post_settings(overrides: dict) -> dict:
         try:
+            # Accept the dotted form as well as the nested one. Without this a
+            # hand-written {"generation.local_steps": 8} validates, reports as
+            # applied, and is persisted as a key nothing ever reads.
+            overrides = config_store.expand_dotted(overrides)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        try:
             await asyncio.to_thread(config_store.validate_overrides, overrides)
         except (ValueError, TypeError) as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc

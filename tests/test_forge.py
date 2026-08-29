@@ -1619,3 +1619,59 @@ async def test_a_fill_skips_a_free_but_slow_rung(store: ClipStore) -> None:
                         free_only=True)
     await run_forge(forge)
     assert [c.backend for c in store.all()] == ["procedural"]
+
+
+# ---------------------------------------------------------------------------
+# ComfyUI hardware knobs
+#
+# Steps and resolution are properties of the machine, not of the graph file.
+# The same graph should run on a laptop and on a DGX at settings appropriate
+# to each, without shipping a second copy of the graph to change a number.
+# ---------------------------------------------------------------------------
+
+
+def _sampler_graph() -> dict:
+    return {
+        "1": {"class_type": "CLIPTextEncode", "inputs": {"text": ""}},
+        "2": {
+            "class_type": "EmptyLTXVLatentVideo",
+            "inputs": {"length": 1, "width": 640, "height": 384},
+        },
+        "3": {"class_type": "KSampler", "inputs": {"steps": 12, "seed": 0}},
+    }
+
+
+def _inputs_of(graph: dict, class_type: str) -> dict:
+    return next(n["inputs"] for n in graph.values() if n["class_type"] == class_type)
+
+
+def test_comfy_steps_and_resolution_come_from_config(tmp_path):
+    store = ClipStore(tmp_path)
+    backend = ComfyUIBackend(
+        store, workflow=_sampler_graph(), steps=8, resolution="512x320"
+    )
+    graph = backend._patched_workflow("a prompt", duration_s=4)
+    assert _inputs_of(graph, "KSampler")["steps"] == 8
+    latent = _inputs_of(graph, "EmptyLTXVLatentVideo")
+    assert (latent["width"], latent["height"]) == (512, 320)
+
+
+def test_comfy_leaves_an_operator_graph_alone_when_unset(tmp_path):
+    # None means "you know your graph better than I do".
+    store = ClipStore(tmp_path)
+    backend = ComfyUIBackend(store, workflow=_sampler_graph())
+    graph = backend._patched_workflow("a prompt", duration_s=4)
+    assert _inputs_of(graph, "KSampler")["steps"] == 12
+    assert _inputs_of(graph, "EmptyLTXVLatentVideo")["width"] == 640
+
+
+def test_comfy_knobs_retune_without_rebuilding_the_backend(tmp_path):
+    # The operator changes these mid-party from the dashboard. Rebuilding the
+    # backend would mean a restart, and a restart drops the continuity chain.
+    store = ClipStore(tmp_path)
+    backend = ComfyUIBackend(store, workflow=_sampler_graph(), steps=8)
+    backend.steps = 20
+    backend.resolution = "768x512"
+    graph = backend._patched_workflow("a prompt", duration_s=4)
+    assert _inputs_of(graph, "KSampler")["steps"] == 20
+    assert _inputs_of(graph, "EmptyLTXVLatentVideo")["height"] == 512

@@ -150,6 +150,7 @@ the UI. All runtime files live outside the repository.
 | drift | microphone and zones |
 | continuity mode | ComfyUI URL |
 | cadence floor | |
+| **local steps and local size** | |
 | freeze / mute | |
 
 Backend choice and the budget ceiling are in the restart column deliberately:
@@ -292,6 +293,32 @@ Settings → Privacy & Security → Microphone.
 
 **Parakeet fails with a dimension mismatch at 80 vs 128.** The ONNX directory
 is missing its `config.json` declaring `features_size: 128`.
+
+### Tuning local generation to your hardware
+
+`local_steps` and `local_resolution` decide how hard your GPU works per clip.
+They live in config, not in the workflow file, so the same graph runs on a
+laptop and on a workstation at settings appropriate to each — and both can be
+retuned from the dashboard while the party is running, which matters because a
+restart drops the clip pool and the continuity chain with it.
+
+```yaml
+generation:
+  backend: "local"
+  local_steps: 8            # blank leaves your workflow file's own value alone
+  local_resolution: "512x320"   # multiples of 32
+```
+
+The trade is responsiveness against fidelity. On an Apple-silicon laptop, 8
+steps at 512×320 renders a 4-second clip in about two minutes; 12 steps at
+640×384 takes four or five. That difference is not academic — it is whether
+the imagery on screen still belongs to the conversation that shaped it, or to
+the one before it. If clips arrive too slowly the procedural renderer fills the
+gaps, and the room sees less of what it actually said.
+
+Bear in mind that the lens stack reprocesses every frame, so a good deal of the
+extra resolution is spent on detail the shaders then paint over. Start fast,
+and raise the settings only if the picture underneath the effects looks thin.
 
 **ComfyUI rejects the LTX-Video VAE with `KeyError: post_quant_conv.weight`.**
 The diffusers VAE published under `vae/` uses `resnets` where ComfyUI expects

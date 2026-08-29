@@ -21,6 +21,7 @@ import secrets
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from dataclasses import field as dc_field
 from decimal import Decimal
 from pathlib import Path
 
@@ -93,6 +94,8 @@ def build_ladder(cfg: EgregoreConfig, store: ClipStore) -> list[VideoBackend]:
                 workflow=_comfy_workflow(),
                 seed_workflow=_comfy_workflow("ltxv-2b-seeded.json",
                                               env="EGREGORE_COMFY_SEED_WORKFLOW"),
+                steps=cfg.generation.local_steps,
+                resolution=cfg.generation.local_resolution,
             )
         )
     # The procedural renderer ("mock") is a real zero-cost backend, always last.
@@ -237,6 +240,26 @@ class LiveSettings:
     #: enough to work with, and every further fill would only dilute the
     #: diffusion clips the party is paying for.
     fill_pool_floor: int = 6
+    #: Local diffusion effort. Properties of the machine rather than of the
+    #: workflow file, so the same graph serves a laptop and a DGX, and so an
+    #: operator can trade fidelity for responsiveness while the room is
+    #: running — a restart would drop the clip pool and the chain with it.
+    #: None on either leaves the graph's own value alone.
+    local_steps: int | None = None
+    local_resolution: str | None = None
+    #: The local rungs these knobs are pushed to. Populated by
+    #: :meth:`bind_backends`; empty when no local backend is in the ladder.
+    _local_backends: list = dc_field(default_factory=list, repr=False)
+
+    def bind_backends(self, ladder: list[VideoBackend]) -> None:
+        """Remember which rungs the hardware knobs apply to."""
+        self._local_backends = [b for b in ladder if isinstance(b, ComfyUIBackend)]
+        self._push_hardware()
+
+    def _push_hardware(self) -> None:
+        for backend in self._local_backends:
+            backend.steps = self.local_steps
+            backend.resolution = self.local_resolution
 
     @classmethod
     def from_config(cls, cfg: EgregoreConfig) -> LiveSettings:
@@ -246,6 +269,8 @@ class LiveSettings:
             drift=cfg.aesthetic.drift,
             grammar=cfg.aesthetic.grammar,
             abstraction=cfg.aesthetic.abstraction,
+            local_steps=cfg.generation.local_steps,
+            local_resolution=cfg.generation.local_resolution,
         )
 
     def apply(self, overrides: dict) -> list[str]:
@@ -263,6 +288,16 @@ class LiveSettings:
         if "resolution" in gen:
             self.resolution = str(gen["resolution"])
             changed.append("generation.resolution")
+        if "local_steps" in gen:
+            raw = gen["local_steps"]
+            self.local_steps = int(raw) if raw not in (None, "") else None
+            changed.append("generation.local_steps")
+        if "local_resolution" in gen:
+            raw = gen["local_resolution"]
+            self.local_resolution = str(raw) if raw not in (None, "") else None
+            changed.append("generation.local_resolution")
+        if "local_steps" in gen or "local_resolution" in gen:
+            self._push_hardware()
         aes = overrides.get("aesthetic") or {}
         if "abstraction" in aes:
             self.abstraction = float(aes["abstraction"])
@@ -709,6 +744,7 @@ async def run_party(cfg: EgregoreConfig, *, ignore_settings: bool = False) -> No
 
     store = ClipStore(Path(cfg.clip_store_dir))
     ladder = build_ladder(cfg, store)
+    live.bind_backends(ladder)
     governor = Governor.from_config(
         cfg,
         cost_per_clip=cost_per_clip(cfg, ladder),

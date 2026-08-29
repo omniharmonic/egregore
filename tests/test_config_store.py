@@ -198,3 +198,45 @@ def test_model_from_json_refuses_prices_that_weaken_the_ceiling():
         store.model_from_json(
             {**base, "price_per_second": {"720P": "0.07"}, "allowed_durations_s": []}
         )
+
+
+# ---------------------------------------------------------------------------
+# Dotted keys arriving from the wire
+#
+# The dashboard nests before posting, but the dotted form is the obvious thing
+# to send by hand and it used to be accepted and then silently dropped: it
+# passed validation (pydantic ignores unknown top-level keys), it matched
+# LIVE_KEYS verbatim so the response said "applied", and it was written to
+# settings.yaml as a literal key that nothing ever reads. The setting looked
+# saved and did nothing, for good.
+# ---------------------------------------------------------------------------
+
+
+def test_dotted_keys_are_expanded_into_the_shape_the_config_actually_uses():
+    assert store.expand_dotted({"generation.local_steps": 8}) == {
+        "generation": {"local_steps": 8}
+    }
+
+
+def test_expansion_merges_with_a_nested_sibling_rather_than_replacing_it():
+    out = store.expand_dotted(
+        {"generation": {"local_steps": 8}, "generation.local_resolution": "512x320"}
+    )
+    assert out == {"generation": {"local_steps": 8, "local_resolution": "512x320"}}
+
+
+def test_already_nested_input_is_unchanged():
+    nested = {"generation": {"local_steps": 8}, "budget": {"total_usd": 0}}
+    assert store.expand_dotted(nested) == nested
+
+
+def test_expansion_is_recursive():
+    assert store.expand_dotted({"weaver": {"llm.base_url": "http://x"}}) == {
+        "weaver": {"llm": {"base_url": "http://x"}}
+    }
+
+
+def test_a_dotted_key_colliding_with_a_non_dict_is_refused():
+    # Silently discarding either value would be worse than saying so.
+    with pytest.raises(ValueError, match="conflicts"):
+        store.expand_dotted({"generation": 3, "generation.local_steps": 8})

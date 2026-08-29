@@ -33,6 +33,13 @@ generation:
   backend: "local"           # ComfyUI + LTX-Video on this machine
   clip_duration_s: 4         # 97 latent frames, the fastest LTXV rung
   fallback: "procedural"     # never let the room go dark
+  # How hard this machine works per clip. Tuned for an Apple-silicon laptop:
+  # a 4s clip lands in roughly two minutes, so imagery still belongs to the
+  # conversation that shaped it. On a bigger GPU raise both — and you can do
+  # it from the dashboard while the party runs, no restart. Leave either
+  # blank to use whatever your own ComfyUI workflow file specifies.
+  local_steps: 8
+  local_resolution: "512x320"
 
 budget:
   total_usd: 0               # structurally cannot reach any cloud

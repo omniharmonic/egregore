@@ -65,6 +65,32 @@ class GenerationConfig(BaseModel):
     fallback: Literal["fal", "local", "procedural", "mock", "none"] = "procedural"
     comfyui_url: str = "http://127.0.0.1:8188"  # local diffusion server (ComfyUI/LTX-2)
     local_model: str = "ltx-2"
+    # How hard the local GPU works per clip. These belong in config rather
+    # than in the workflow file because they are properties of the machine,
+    # not of the graph: the same graph should run on a laptop and on a DGX at
+    # settings appropriate to each. None means "leave whatever the graph
+    # already specifies alone", so an operator's own graph is never
+    # second-guessed.
+    local_steps: int | None = Field(None, ge=1, le=100)
+    local_resolution: str | None = None  # e.g. "512x320"
+
+    @field_validator("local_resolution")
+    @classmethod
+    def _wh(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        try:
+            w, h = (int(part) for part in v.lower().split("x"))
+        except ValueError:
+            raise ValueError('local_resolution must look like "512x320"') from None
+        # Latent-space models work in multiples of 32; a size that is not
+        # would be silently rounded by the sampler, so the operator would be
+        # tuning a number that is not the one being used.
+        if w % 32 or h % 32:
+            raise ValueError("local_resolution width and height must be multiples of 32")
+        if not (128 <= w <= 4096 and 128 <= h <= 4096):
+            raise ValueError("local_resolution must be between 128 and 4096 per side")
+        return f"{w}x{h}"
     # fal.ai fronts many video models behind one queue protocol, so the model
     # is a catalogue key (egregore.forge.fal.FAL_MODELS) rather than a second
     # backend. Swapping vendors is a config edit, not a code change.
